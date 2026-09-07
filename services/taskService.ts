@@ -2,7 +2,49 @@ import { supabase } from '@/services/supabase';
 import { DBTask, RecurAnchor, RecurFrequency, TaskRow } from '@/types';
 import { sortByDueDate, toDateString } from '@/utils/taskUtils';
 
-const TASK_FIELDS = 'id, title, description, due_date, user_id, property_id, file_id, recur_frequency, recur_anchor, completed_at';
+// NOTE: this must stay a single string literal. supabase-js infers the row type
+// from the select string at compile time, and a concatenated expression makes it
+// fall back to GenericStringError (which breaks every call site).
+// The trailing fields are inspection-derived: they drive the Home Health Score,
+// severity badges, per-system filtering and cost-of-waiting.
+const TASK_FIELDS =
+  'id, title, description, due_date, user_id, property_id, file_id, recur_frequency, recur_anchor, completed_at, system, severity, location, issue, fix_recommendation, cost_min, cost_max, timing_note, recurrence';
+
+/**
+ * Optional inspection-derived detail for a task. Everything is nullable: a
+ * manually-created task has none of it, and a partial AI extraction should
+ * still save rather than fail.
+ */
+export type TaskExtras = {
+  system?: string | null;
+  severity?: string | null;
+  location?: string | null;
+  issue?: string | null;
+  fixRecommendation?: string | null;
+  costMin?: number | null;
+  costMax?: number | null;
+  timingNote?: string | null;
+  recurrence?: string | null;
+};
+
+/**
+ * Map the camelCase extras onto the snake_case DB columns. Always returns the
+ * same shape (nulls when absent) so the inferred type stays a plain object and
+ * stays spreadable.
+ */
+function extrasToRow(e?: TaskExtras) {
+  return {
+    system: e?.system ?? null,
+    severity: e?.severity ?? null,
+    location: e?.location ?? null,
+    issue: e?.issue ?? null,
+    fix_recommendation: e?.fixRecommendation ?? null,
+    cost_min: e?.costMin ?? null,
+    cost_max: e?.costMax ?? null,
+    timing_note: e?.timingNote ?? null,
+    recurrence: e?.recurrence ?? null,
+  };
+}
 
 /**
  * Fetch all pending tasks for a user, enriched with property and file names.
@@ -64,6 +106,7 @@ export async function createTask(
   fileId?: string | null,
   recurFrequency?: RecurFrequency | null,
   recurAnchor?: RecurAnchor | null,
+  extras?: TaskExtras,
 ): Promise<DBTask> {
   const { data, error } = await supabase
     .from('tasks')
@@ -76,6 +119,7 @@ export async function createTask(
       file_id: fileId || null,
       recur_frequency: recurFrequency || null,
       recur_anchor: recurAnchor || null,
+      ...extrasToRow(extras),
     })
     .select(TASK_FIELDS)
     .single();

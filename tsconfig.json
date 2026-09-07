@@ -15,5 +15,12 @@
     ".expo/types/**/*.ts",
     "expo-env.d.ts",
     "nativewind-env.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    // Edge Functions run on Deno (Supabase), not in the React Native bundle.
+    // They use Deno globals and jsr:/npm: imports that this config can't
+    // resolve, so type-checking them here produces meaningless errors.
+    "supabase/functions"
   ]
 }

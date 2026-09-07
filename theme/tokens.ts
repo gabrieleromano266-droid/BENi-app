@@ -35,6 +35,7 @@ export const dropdownSizes = {
 
 /** Border-radius scale */
 export const radius = {
+  xs:   5,   // checkboxes and other tiny controls
   sm:   8,   // inputs, small buttons, chips
   md:   10,  // task/file cards, tabs, button-md
   lg:   12,  // file cards, menus, button-lg

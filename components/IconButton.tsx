@@ -29,6 +29,9 @@ function resolveBg(variant: ButtonVariant, colors: Colors, disabled: boolean): s
     case 'secondary': return colors.surface;
     case 'outline': return 'transparent';
   }
+  // Fallback so the function always returns, even if a new ButtonVariant is
+  // added later without updating this switch.
+  return colors.primary;
 }
 
 function resolveIconColor(variant: ButtonVariant, colors: Colors, disabled: boolean): string {

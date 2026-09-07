@@ -52,6 +52,21 @@ export default function TaskConfirmationPopup({
           task.dueDate ?? null,
           propertyId,
           fileId,
+          task.recurFrequency ?? null,
+          task.recurAnchor ?? null,
+          // Carry the inspection detail through to the database so the
+          // dashboard can score, filter and price the work.
+          {
+            system: task.system ?? null,
+            severity: task.severity ?? null,
+            location: task.location ?? null,
+            issue: task.issue ?? null,
+            fixRecommendation: task.fixRecommendation ?? null,
+            costMin: task.costMin ?? null,
+            costMax: task.costMax ?? null,
+            timingNote: task.timingNote ?? null,
+            recurrence: task.recurrence ?? null,
+          },
         );
       }
       onClose(true);

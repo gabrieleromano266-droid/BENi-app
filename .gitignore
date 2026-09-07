@@ -43,3 +43,5 @@ app-example
 /android
 supabase/.temp
 supabase/.branches
+# Local secrets — never commit
+.env
