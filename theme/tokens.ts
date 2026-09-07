@@ -43,6 +43,23 @@ export const radius = {
   pill: 20,  // filter chips
 } as const;
 
+/**
+ * Font families — matches the demo: Montserrat for headings + big numbers,
+ * Inter for body. These names are the keys registered via useFonts() in
+ * app/_layout.tsx. If the fonts fail to load, React Native falls back to the
+ * system font at the same weight, so referencing these is always safe.
+ */
+export const fonts = {
+  /** Body text (Inter) — regular weight */
+  body: 'Inter_400Regular',
+  bodyMedium: 'Inter_500Medium',
+  bodySemibold: 'Inter_600SemiBold',
+  /** Headings / section titles (Montserrat, bold) */
+  heading: 'Montserrat_700Bold',
+  /** Hero numbers — health score, stat values (Montserrat, extra bold) */
+  display: 'Montserrat_800ExtraBold',
+} as const;
+
 /** Font-size scale */
 export const fontSize = {
   xs:  11,   // metadata, timestamps, tiny labels

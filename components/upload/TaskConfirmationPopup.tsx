@@ -45,29 +45,7 @@ export default function TaskConfirmationPopup({
     setSaving(true);
     try {
       for (const task of tasks) {
-        await createTask(
-          userId,
-          task.title,
-          task.description || null,
-          task.dueDate ?? null,
-          propertyId,
-          fileId,
-          task.recurFrequency ?? null,
-          task.recurAnchor ?? null,
-          // Carry the inspection detail through to the database so the
-          // dashboard can score, filter and price the work.
-          {
-            system: task.system ?? null,
-            severity: task.severity ?? null,
-            location: task.location ?? null,
-            issue: task.issue ?? null,
-            fixRecommendation: task.fixRecommendation ?? null,
-            costMin: task.costMin ?? null,
-            costMax: task.costMax ?? null,
-            timingNote: task.timingNote ?? null,
-            recurrence: task.recurrence ?? null,
-          },
-        );
+        await createTask(userId, { ...task, propertyId, fileId });
       }
       onClose(true);
     } catch (err) {

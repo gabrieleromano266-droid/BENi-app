@@ -24,6 +24,7 @@ function resolveBg(variant: ButtonVariant, colors: Colors, disabled: boolean): s
     case 'primary': return colors.primary;
     case 'success': return colors.success;
     case 'danger': return colors.danger;
+    case 'danger-outline': return 'transparent';
     case 'warning': return colors.warning;
     case 'info': return colors.info;
     case 'secondary': return colors.surface;
@@ -38,6 +39,7 @@ function resolveIconColor(variant: ButtonVariant, colors: Colors, disabled: bool
   if (disabled) return colors.textDisabled;
   if (variant === 'secondary') return colors.textSecondary;
   if (variant === 'outline') return colors.info;
+  if (variant === 'danger-outline') return colors.danger;
   return '#fff';
 }
 

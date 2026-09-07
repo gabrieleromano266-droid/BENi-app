@@ -1,15 +1,5 @@
 import { supabase } from '@/services/supabase';
-
-/** A home system, matching the tasks.system check constraint in the database. */
-export type HomeSystem =
-  | 'roof_attic'
-  | 'electrical'
-  | 'plumbing'
-  | 'hvac'
-  | 'exterior'
-  | 'interior';
-
-export type Severity = 'critical' | 'moderate' | 'minor';
+import { HomeSystem, TaskSeverity } from '@/types';
 
 /**
  * What the ExtractTasksUsingLLM Edge Function returns for each finding.
@@ -22,7 +12,7 @@ export type ExtractedTask = {
   title: string;
   dueDate: string | null;
   system: HomeSystem | null;
-  severity: Severity | null;
+  severity: TaskSeverity | null;
   location: string | null;
   issue: string | null;
   fixRecommendation: string | null;

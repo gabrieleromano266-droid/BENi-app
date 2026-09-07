@@ -2,10 +2,13 @@ import ChipSelector from '@/components/ChipSelector';
 import { DateInput } from '@/components/DateInput';
 import Dropdown from '@/components/Dropdown';
 import { ANCHOR_OPTIONS, FREQ_OPTIONS } from '@/constants/recurrence';
+import { SEVERITY_OPTIONS } from '@/constants/severity';
+import { SYSTEM_OPTIONS } from '@/constants/systems';
 import { usePropertyFiles } from '@/hooks/usePropertyFiles';
+import { TaskInput } from '@/services/taskService';
 import { useTheme } from '@/theme/ThemeContext';
 import { fontSize, radius, spacing } from '@/theme/tokens';
-import { FileRecord, Property, RecurAnchor, RecurFrequency } from '@/types';
+import { FileRecord, HomeSystem, Property, RecurAnchor, RecurFrequency, TaskSeverity } from '@/types';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useState } from 'react';
 import { Modal, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -15,15 +18,7 @@ import { LoadingModal } from './LoadingModal';
 type Props = {
   visible: boolean;
   onClose: () => void;
-  onAdd: (
-    title: string,
-    description: string,
-    dueDate: Date | null,
-    propertyId?: string,
-    fileId?: string,
-    recurFrequency?: RecurFrequency | null,
-    recurAnchor?: RecurAnchor | null,
-  ) => Promise<void>;
+  onAdd: (input: TaskInput) => Promise<void>;
   /** Dashboard: shows property picker */
   properties?: Property[];
   /** Property detail: pre-loaded files for file picker */
@@ -41,6 +36,16 @@ export default function AddTaskModal({ visible, onClose, onAdd, properties, file
   const [recurAnchor, setRecurAnchor] = useState<RecurAnchor>('completion');
   const [saving, setSaving] = useState(false);
 
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [system, setSystem] = useState<HomeSystem | null>(null);
+  const [severity, setSeverity] = useState<TaskSeverity | null>(null);
+  const [location, setLocation] = useState('');
+  const [issue, setIssue] = useState('');
+  const [fixRecommendation, setFixRecommendation] = useState('');
+  const [costMin, setCostMin] = useState('');
+  const [costMax, setCostMax] = useState('');
+  const [timingNote, setTimingNote] = useState('');
+
   const availableFiles = usePropertyFiles(
     selectedPropertyId,
     propFiles,
@@ -52,15 +57,23 @@ export default function AddTaskModal({ visible, onClose, onAdd, properties, file
     if (!title.trim()) return;
     setSaving(true);
     try {
-      await onAdd(
-        title.trim(),
-        description.trim(),
+      await onAdd({
+        title: title.trim(),
+        description: description.trim(),
         dueDate,
-        selectedPropertyId ?? undefined,
-        selectedFileId ?? undefined,
+        propertyId: selectedPropertyId,
+        fileId: selectedFileId,
         recurFrequency,
-        recurFrequency ? recurAnchor : null,
-      );
+        recurAnchor: recurFrequency ? recurAnchor : null,
+        system,
+        severity,
+        location: location.trim() || null,
+        issue: issue.trim() || null,
+        fixRecommendation: fixRecommendation.trim() || null,
+        costMin: costMin.trim() ? Number(costMin) : null,
+        costMax: costMax.trim() ? Number(costMax) : null,
+        timingNote: timingNote.trim() || null,
+      });
       reset();
     } finally {
       setSaving(false);
@@ -75,6 +88,15 @@ export default function AddTaskModal({ visible, onClose, onAdd, properties, file
     setSelectedFileId(null);
     setRecurFrequency(null);
     setRecurAnchor('completion');
+    setDetailsOpen(false);
+    setSystem(null);
+    setSeverity(null);
+    setLocation('');
+    setIssue('');
+    setFixRecommendation('');
+    setCostMin('');
+    setCostMax('');
+    setTimingNote('');
   };
 
   const handleCancel = () => {
@@ -174,6 +196,119 @@ export default function AddTaskModal({ visible, onClose, onAdd, properties, file
               )}
             </View>
 
+            <TouchableOpacity
+              style={[styles.detailsToggle, { borderTopColor: colors.borderLight }]}
+              onPress={() => setDetailsOpen((v) => !v)}
+            >
+              <MaterialIcons
+                name={detailsOpen ? 'expand-less' : 'expand-more'}
+                size={18}
+                color={colors.info}
+              />
+              <Text style={[styles.detailsToggleText, { color: colors.info }]}>
+                Home system &amp; details
+              </Text>
+            </TouchableOpacity>
+
+            {detailsOpen && (
+              <View style={styles.detailsSection}>
+                <ChipSelector
+                  label="Home system"
+                  options={[{ label: 'None', value: null }, ...SYSTEM_OPTIONS]}
+                  selected={system}
+                  onSelect={(v) => setSystem(v as HomeSystem | null)}
+                />
+                <ChipSelector
+                  label="Severity"
+                  options={[{ label: 'None', value: null }, ...SEVERITY_OPTIONS]}
+                  selected={severity}
+                  onSelect={(v) => setSeverity(v as TaskSeverity | null)}
+                />
+
+                <Text style={[styles.label, { color: colors.textMuted }]}>Where</Text>
+                <TextInput
+                  value={location}
+                  onChangeText={setLocation}
+                  placeholder="e.g. Basement, north wall"
+                  placeholderTextColor={colors.inputPlaceholder}
+                  style={[styles.input, {
+                    borderColor: colors.inputBorder,
+                    color: colors.textPrimary,
+                    backgroundColor: colors.inputBackground,
+                  }]}
+                />
+
+                <Text style={[styles.label, { color: colors.textMuted }]}>What it is</Text>
+                <TextInput
+                  value={issue}
+                  onChangeText={setIssue}
+                  placeholder="Describe the finding"
+                  placeholderTextColor={colors.inputPlaceholder}
+                  multiline
+                  style={[styles.input, styles.inputMulti, {
+                    borderColor: colors.inputBorder,
+                    color: colors.textPrimary,
+                    backgroundColor: colors.inputBackground,
+                  }]}
+                />
+
+                <Text style={[styles.label, { color: colors.textMuted }]}>How to fix it</Text>
+                <TextInput
+                  value={fixRecommendation}
+                  onChangeText={setFixRecommendation}
+                  placeholder="Recommended fix"
+                  placeholderTextColor={colors.inputPlaceholder}
+                  multiline
+                  style={[styles.input, styles.inputMulti, {
+                    borderColor: colors.inputBorder,
+                    color: colors.textPrimary,
+                    backgroundColor: colors.inputBackground,
+                  }]}
+                />
+
+                <Text style={[styles.label, { color: colors.textMuted }]}>Estimated cost</Text>
+                <View style={styles.costRow}>
+                  <TextInput
+                    value={costMin}
+                    onChangeText={setCostMin}
+                    placeholder="Min $"
+                    keyboardType="numeric"
+                    placeholderTextColor={colors.inputPlaceholder}
+                    style={[styles.input, styles.costInput, {
+                      borderColor: colors.inputBorder,
+                      color: colors.textPrimary,
+                      backgroundColor: colors.inputBackground,
+                    }]}
+                  />
+                  <TextInput
+                    value={costMax}
+                    onChangeText={setCostMax}
+                    placeholder="Max $"
+                    keyboardType="numeric"
+                    placeholderTextColor={colors.inputPlaceholder}
+                    style={[styles.input, styles.costInput, {
+                      borderColor: colors.inputBorder,
+                      color: colors.textPrimary,
+                      backgroundColor: colors.inputBackground,
+                    }]}
+                  />
+                </View>
+
+                <Text style={[styles.label, { color: colors.textMuted }]}>Do it by (note)</Text>
+                <TextInput
+                  value={timingNote}
+                  onChangeText={setTimingNote}
+                  placeholder="e.g. Best before fall rains"
+                  placeholderTextColor={colors.inputPlaceholder}
+                  style={[styles.input, {
+                    borderColor: colors.inputBorder,
+                    color: colors.textPrimary,
+                    backgroundColor: colors.inputBackground,
+                  }]}
+                />
+              </View>
+            )}
+
             <View style={styles.btnRow}>
               <Button
                 title={saving ? 'Saving…' : 'Add'}
@@ -221,6 +356,13 @@ const styles = StyleSheet.create({
   inputMulti: {
     minHeight: 60,
   },
+  costRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  costInput: {
+    flex: 1,
+  },
   recurrenceSection: {
     marginTop: spacing.md,
   },
@@ -236,6 +378,22 @@ const styles = StyleSheet.create({
   dropLabel: {
     fontSize: 12,
     fontWeight: '500',
+  },
+  detailsToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    borderTopWidth: 1,
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+  },
+  detailsToggleText: {
+    fontSize: fontSize.sm,
+    fontWeight: '600',
+  },
+  detailsSection: {
+    marginTop: spacing.md,
+    gap: 0,
   },
   btnRow: {
     flexDirection: 'row',

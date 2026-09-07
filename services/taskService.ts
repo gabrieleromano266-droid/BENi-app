@@ -1,48 +1,30 @@
 import { supabase } from '@/services/supabase';
-import { DBTask, RecurAnchor, RecurFrequency, TaskRow } from '@/types';
+import { DBTask, TaskRow, TaskType } from '@/types';
 import { sortByDueDate, toDateString } from '@/utils/taskUtils';
 
-// NOTE: this must stay a single string literal. supabase-js infers the row type
-// from the select string at compile time, and a concatenated expression makes it
-// fall back to GenericStringError (which breaks every call site).
-// The trailing fields are inspection-derived: they drive the Home Health Score,
-// severity badges, per-system filtering and cost-of-waiting.
-const TASK_FIELDS =
-  'id, title, description, due_date, user_id, property_id, file_id, recur_frequency, recur_anchor, completed_at, system, severity, location, issue, fix_recommendation, cost_min, cost_max, timing_note, recurrence';
+export const TASK_FIELDS = 'id, title, description, due_date, user_id, property_id, file_id, recur_frequency, recur_anchor, completed_at, system, severity, location, issue, fix_recommendation, cost_min, cost_max, timing_note, recurrence';
 
-/**
- * Optional inspection-derived detail for a task. Everything is nullable: a
- * manually-created task has none of it, and a partial AI extraction should
- * still save rather than fail.
- */
-export type TaskExtras = {
-  system?: string | null;
-  severity?: string | null;
-  location?: string | null;
-  issue?: string | null;
-  fixRecommendation?: string | null;
-  costMin?: number | null;
-  costMax?: number | null;
-  timingNote?: string | null;
-  recurrence?: string | null;
-};
+/** Fields accepted when creating or updating a task */
+export type TaskInput = Omit<TaskType, 'id'>;
 
-/**
- * Map the camelCase extras onto the snake_case DB columns. Always returns the
- * same shape (nulls when absent) so the inferred type stays a plain object and
- * stays spreadable.
- */
-function extrasToRow(e?: TaskExtras) {
+function taskInputToRow(input: TaskInput) {
   return {
-    system: e?.system ?? null,
-    severity: e?.severity ?? null,
-    location: e?.location ?? null,
-    issue: e?.issue ?? null,
-    fix_recommendation: e?.fixRecommendation ?? null,
-    cost_min: e?.costMin ?? null,
-    cost_max: e?.costMax ?? null,
-    timing_note: e?.timingNote ?? null,
-    recurrence: e?.recurrence ?? null,
+    title: input.title,
+    description: input.description || null,
+    due_date: toDateString(input.dueDate ?? null),
+    property_id: input.propertyId || null,
+    file_id: input.fileId || null,
+    recur_frequency: input.recurFrequency || null,
+    recur_anchor: input.recurAnchor || null,
+    system: input.system || null,
+    severity: input.severity || null,
+    location: input.location || null,
+    issue: input.issue || null,
+    fix_recommendation: input.fixRecommendation || null,
+    cost_min: input.costMin ?? null,
+    cost_max: input.costMax ?? null,
+    timing_note: input.timingNote || null,
+    recurrence: input.recurrence || null,
   };
 }
 
@@ -94,33 +76,25 @@ export async function fetchTasksForProperty(propertyId: string): Promise<DBTask[
   return sortByDueDate(data || []);
 }
 
+/** Count completed tasks for a user, optionally scoped to one property (dashboard "Completed" stat) */
+export async function fetchCompletedTaskCount(userId: string, propertyId?: string | null): Promise<number> {
+  let query = supabase
+    .from('tasks')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .not('completed_at', 'is', null);
+  if (propertyId) query = query.eq('property_id', propertyId);
+  const { count } = await query;
+  return count ?? 0;
+}
+
 /**
  * Create a new task and return the inserted row.
  */
-export async function createTask(
-  userId: string,
-  title: string,
-  description: string | null,
-  dueDate: Date | null,
-  propertyId?: string | null,
-  fileId?: string | null,
-  recurFrequency?: RecurFrequency | null,
-  recurAnchor?: RecurAnchor | null,
-  extras?: TaskExtras,
-): Promise<DBTask> {
+export async function createTask(userId: string, input: TaskInput): Promise<DBTask> {
   const { data, error } = await supabase
     .from('tasks')
-    .insert({
-      user_id: userId,
-      title,
-      description,
-      due_date: toDateString(dueDate),
-      property_id: propertyId || null,
-      file_id: fileId || null,
-      recur_frequency: recurFrequency || null,
-      recur_anchor: recurAnchor || null,
-      ...extrasToRow(extras),
-    })
+    .insert({ user_id: userId, ...taskInputToRow(input) })
     .select(TASK_FIELDS)
     .single();
 
@@ -129,27 +103,10 @@ export async function createTask(
 }
 
 /** Update a task's fields */
-export async function updateTask(
-  id: string,
-  title: string,
-  description: string | null,
-  dueDate: Date | null,
-  propertyId?: string | null,
-  fileId?: string | null,
-  recurFrequency?: RecurFrequency | null,
-  recurAnchor?: RecurAnchor | null,
-): Promise<void> {
+export async function updateTask(id: string, input: TaskInput): Promise<void> {
   const { error } = await supabase
     .from('tasks')
-    .update({
-      title,
-      description,
-      due_date: toDateString(dueDate),
-      property_id: propertyId !== undefined ? propertyId : undefined,
-      file_id: fileId !== undefined ? fileId : undefined,
-      recur_frequency: recurFrequency !== undefined ? recurFrequency : undefined,
-      recur_anchor: recurAnchor !== undefined ? recurAnchor : undefined,
-    })
+    .update(taskInputToRow(input))
     .eq('id', id);
   if (error) throw error;
 }
@@ -160,14 +117,16 @@ export async function updateTask(
  * - If the task already recurs, uses its existing frequency/anchor.
  * - If the task doesn't recur but newFrequency is provided, creates the next
  *   occurrence with that recurrence so future completions keep the pattern.
+ * - The next occurrence carries over the task's system/severity/location/fix/
+ *   cost/timing details so a recurring critical roof task stays tagged that way.
  * - Returns the newly created task, or null if no next occurrence.
  */
 export async function completeTask(
   task: DBTask,
   userId: string,
   nextDueDate: Date | null,
-  newFrequency?: RecurFrequency | null,
-  newAnchor?: RecurAnchor | null,
+  newFrequency?: TaskInput['recurFrequency'],
+  newAnchor?: TaskInput['recurAnchor'],
 ): Promise<DBTask | null> {
   await supabase
     .from('tasks')
@@ -190,6 +149,14 @@ export async function completeTask(
       file_id: task.file_id,
       recur_frequency: freq,
       recur_anchor: anchor,
+      system: task.system,
+      severity: task.severity,
+      location: task.location,
+      issue: task.issue,
+      fix_recommendation: task.fix_recommendation,
+      cost_min: task.cost_min,
+      cost_max: task.cost_max,
+      timing_note: task.timing_note,
     })
     .select(TASK_FIELDS)
     .single();

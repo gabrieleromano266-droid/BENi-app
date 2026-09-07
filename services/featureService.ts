@@ -1,7 +1,8 @@
 import { supabase } from '@/services/supabase';
 import { DBTask, StandardFeature } from '@/types';
+// Single source of truth — a local copy silently drifts when columns are added.
+import { TASK_FIELDS } from '@/services/taskService';
 
-const TASK_FIELDS = 'id, title, description, due_date, user_id, property_id, file_id, recur_frequency, recur_anchor, completed_at';
 
 export async function fetchStandardFeatures(): Promise<StandardFeature[]> {
   const { data, error } = await supabase

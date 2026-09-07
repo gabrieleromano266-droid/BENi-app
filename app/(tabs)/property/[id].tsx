@@ -16,9 +16,9 @@ import { useSelectionMode } from '@/hooks/useSelectionMode';
 import { supabase } from '@/services/supabase';
 import { deleteFiles, downloadFile, fetchFilesForProperty } from '@/services/fileService';
 import { fetchStandardFeatures, fetchPropertyFeatureIds } from '@/services/featureService';
-import { completeTask, createTask, deleteTasks, fetchTasksForProperty, updateTask } from '@/services/taskService';
+import { completeTask, createTask, deleteTasks, fetchTasksForProperty, TaskInput, updateTask } from '@/services/taskService';
 import { useTheme } from '@/theme/ThemeContext';
-import { DBTask, FileRecord, RecurAnchor, RecurFrequency, StandardFeature, TaskType } from '@/types';
+import { DBTask, FileRecord, StandardFeature, TaskType } from '@/types';
 import { dbTaskToTaskType, sortByDueDate, toDateString } from '@/utils/taskUtils';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -100,15 +100,15 @@ export default function PropertyDetailScreen() {
 
   // ── Task actions ──────────────────────────────────────────────────────────
 
-  const handleAddTask = async (title: string, description: string, dueDate: Date | null, _propertyId?: string, fileId?: string, recurFrequency?: RecurFrequency | null, recurAnchor?: RecurAnchor | null) => {
+  const handleAddTask = async (input: TaskInput) => {
     if (!userId) return;
-    const newTask = await createTask(userId, title, description || null, dueDate, id, fileId, recurFrequency, recurAnchor);
+    const newTask = await createTask(userId, { ...input, propertyId: id });
     setTasks((prev) => sortByDueDate([...prev, newTask]));
     setAddTaskVisible(false);
   };
 
   const handleUpdateTask = async (taskId: string, updated: TaskType) => {
-    await updateTask(taskId, updated.title, updated.description ?? null, updated.dueDate ?? null, undefined, updated.fileId, updated.recurFrequency, updated.recurAnchor);
+    await updateTask(taskId, { ...updated, propertyId: id });
     setTasks((prev) =>
       sortByDueDate(prev.map((t) =>
         t.id === taskId

@@ -42,6 +42,14 @@ export function dbTaskToTaskType(t: DBTask): TaskType {
     fileId: t.file_id,
     recurFrequency: t.recur_frequency,
     recurAnchor: t.recur_anchor,
+    system: t.system,
+    severity: t.severity,
+    location: t.location,
+    issue: t.issue,
+    fixRecommendation: t.fix_recommendation,
+    costMin: t.cost_min,
+    costMax: t.cost_max,
+    timingNote: t.timing_note,
   };
 }
 

@@ -8,18 +8,20 @@
 import { ReactNode } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme/ThemeContext';
-import { fontSize, spacing } from '@/theme/tokens';
+import { fonts, fontSize, spacing } from '@/theme/tokens';
 
 type Props = {
   title: string;
   subtitle?: string;
+  /** Override the subtitle color (defaults to muted). Pass a theme token, not a raw hex. */
+  subtitleColor?: string;
   /** Rendered before the title block (e.g. back arrow) */
   left?: ReactNode;
   /** Rendered after the title block (e.g. primary action, selection actions) */
   right?: ReactNode;
 };
 
-export default function PageHeader({ title, subtitle, left, right }: Props) {
+export default function PageHeader({ title, subtitle, subtitleColor, left, right }: Props) {
   const { colors } = useTheme();
   return (
     <View style={styles.row}>
@@ -29,7 +31,7 @@ export default function PageHeader({ title, subtitle, left, right }: Props) {
           {title}
         </Text>
         {subtitle != null && (
-          <Text style={[styles.subtitle, { color: colors.textMuted }]}>{subtitle}</Text>
+          <Text style={[styles.subtitle, { color: subtitleColor ?? colors.textMuted }]}>{subtitle}</Text>
         )}
       </View>
       {right}
@@ -49,6 +51,7 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   title: {
+    fontFamily: fonts.heading,
     fontSize: fontSize.h2,
     fontWeight: 'bold',
   },

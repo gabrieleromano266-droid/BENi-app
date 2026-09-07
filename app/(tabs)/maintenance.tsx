@@ -12,9 +12,9 @@ import TaskItem from '@/components/TaskItem';
 import { useSelectionMode } from '@/hooks/useSelectionMode';
 import { supabase } from '@/services/supabase';
 import { fetchProperties } from '@/services/propertyService';
-import { completeTask, createTask, deleteTasks, fetchAllTasksForUser, updateTask } from '@/services/taskService';
+import { completeTask, createTask, deleteTasks, fetchAllTasksForUser, TaskInput, updateTask } from '@/services/taskService';
 import { useTheme } from '@/theme/ThemeContext';
-import { Property, RecurAnchor, RecurFrequency, TaskRow, TaskType } from '@/types';
+import { Property, TaskRow, TaskType } from '@/types';
 import { dbTaskToTaskType, sortByDueDate, toDateString } from '@/utils/taskUtils';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useRouter } from 'expo-router';
@@ -61,16 +61,16 @@ export default function MaintenanceScreen() {
     setFileFilter(null);
   };
 
-  const handleAddTask = async (title: string, description: string, dueDate: Date | null, propertyId?: string, fileId?: string, recurFrequency?: RecurFrequency | null, recurAnchor?: RecurAnchor | null) => {
+  const handleAddTask = async (input: TaskInput) => {
     if (!userId) return;
-    const newTask = await createTask(userId, title, description || null, dueDate, propertyId, fileId, recurFrequency, recurAnchor);
-    const propertyName = propertyId ? (properties.find((p) => p.id === propertyId)?.name || '') : '';
+    const newTask = await createTask(userId, input);
+    const propertyName = input.propertyId ? (properties.find((p) => p.id === input.propertyId)?.name || '') : '';
     setAllTasks((prev) => sortByDueDate([...prev, { ...newTask, propertyName, fileName: '' }]));
     setAddTaskVisible(false);
   };
 
   const handleUpdateTask = async (taskId: string, updated: TaskType) => {
-    await updateTask(taskId, updated.title, updated.description ?? null, updated.dueDate ?? null, updated.propertyId, updated.fileId, updated.recurFrequency, updated.recurAnchor);
+    await updateTask(taskId, updated);
     setAllTasks((prev) =>
       sortByDueDate(prev.map((t) => {
         if (t.id !== taskId) return t;
@@ -86,6 +86,14 @@ export default function MaintenanceScreen() {
           file_id: updated.fileId ?? null,
           recur_frequency: updated.recurFrequency ?? null,
           recur_anchor: updated.recurAnchor ?? null,
+          system: updated.system ?? null,
+          severity: updated.severity ?? null,
+          location: updated.location ?? null,
+          issue: updated.issue ?? null,
+          fix_recommendation: updated.fixRecommendation ?? null,
+          cost_min: updated.costMin ?? null,
+          cost_max: updated.costMax ?? null,
+          timing_note: updated.timingNote ?? null,
           propertyName,
         };
       })),

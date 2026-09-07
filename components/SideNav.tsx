@@ -17,15 +17,17 @@ import { fontSize, radius, spacing } from '@/theme/tokens';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { usePathname, useRouter } from 'expo-router';
 import { ComponentProps, useEffect, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { Image, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 
 const TOPBAR_HEIGHT = 56;
 
 type IconName = ComponentProps<typeof MaterialIcons>['name'];
 
+// "My Properties" was removed from the nav: property switching now lives solely
+// in the dashboard header dropdown. The /(tabs)/properties route still exists but
+// is no longer linked here.
 const NAV_ITEMS: { label: string; icon: IconName; path: string }[] = [
   { label: 'Dashboard', icon: 'space-dashboard', path: '/(tabs)/dashboard' },
-  { label: 'My Properties', icon: 'apartment', path: '/(tabs)/properties' },
   { label: 'Maintenance', icon: 'assignment', path: '/(tabs)/maintenance' },
   { label: 'Documents', icon: 'description', path: '/(tabs)/documents' },
 ];
@@ -71,18 +73,17 @@ export default function SideNav() {
     return pathname === clean || pathname === path;
   };
 
+  // Sidebar background is dark navy in both app themes, so the cream mark is
+  // the one that actually reads against it — the navy mark is confirmed
+  // near-invisible there (checked against both themes' headerBg).
+  const logoSource = require('@/assets/images/beni-logo-cream.png');
+
   const panel = (
     <View style={[styles.panel, { backgroundColor: colors.headerBg }]}>
       {/* Logo */}
       <View style={styles.logoRow}>
         <TouchableOpacity style={styles.logoBlock} onPress={() => navigate('/(tabs)/dashboard')}>
-          <View style={[styles.logoTile, { backgroundColor: colors.headerActiveBg }]}>
-            <MaterialIcons name="home" size={22} color={colors.headerAccent} />
-          </View>
-          <View>
-            <Text style={[styles.logoTitle, { color: colors.headerAccent }]}>BENi</Text>
-            <Text style={[styles.logoTagline, { color: colors.headerTextMuted }]}>SMART HOME TOOL</Text>
-          </View>
+          <Image source={logoSource} style={styles.logoImage} resizeMode="contain" />
         </TouchableOpacity>
         {!isWide && (
           <IconButton
@@ -163,8 +164,7 @@ export default function SideNav() {
               iconColor={colors.headerText}
               style={{ backgroundColor: 'transparent' }}
             />
-            <MaterialIcons name="home" size={22} color={colors.headerAccent} />
-            <Text style={[styles.topBarTitle, { color: colors.headerAccent }]}>BENi</Text>
+            <Image source={logoSource} style={styles.topBarLogo} resizeMode="contain" />
           </View>
 
           {/* Slide-over drawer — a Modal so it reliably covers the whole screen
@@ -228,22 +228,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.md,
   },
-  logoTile: {
-    width: 40,
+  logoImage: {
+    width: 140,
     height: 40,
-    borderRadius: radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logoTitle: {
-    fontSize: fontSize.h3,
-    fontWeight: 'bold',
-    letterSpacing: 0.5,
-  },
-  logoTagline: {
-    fontSize: 9,
-    letterSpacing: 2,
-    marginTop: 1,
   },
   badge: {
     alignSelf: 'flex-start',
@@ -332,10 +319,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     gap: spacing.sm,
   },
-  topBarTitle: {
-    fontSize: fontSize.lg,
-    fontWeight: 'bold',
-    letterSpacing: 1,
+  topBarLogo: {
+    width: 110,
+    height: 28,
   },
   drawerLayer: {
     flex: 1,

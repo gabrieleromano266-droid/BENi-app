@@ -134,7 +134,7 @@ const styles = StyleSheet.create({
   checkbox: {
     width: 20,
     height: 20,
-    borderRadius: radius.xs ?? 5,
+    borderRadius: 5,
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
