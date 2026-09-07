@@ -74,17 +74,48 @@ const SECTION_HEADERS = [
 function buildSystemPrompt(catalogText: string): string {
   return `You read home inspection reports and turn them into a homeowner's maintenance plan.
 
-REPORT FORMAT YOU WILL SEE
-The report is organised under ALL-CAPS section headings (ROOF, EXTERIOR, GARAGE,
-ATTIC, INTERIOR, KITCHEN, LAUNDROMAT, BATHROOM, MECHANICAL). Under each heading,
-findings look like:
+WHAT COUNTS AS A FINDING (format-independent)
+Inspection reports vary by company and template. Do NOT rely on any single
+layout. A finding is ANY place the report describes an observed condition,
+defect, damage, wear, safety concern, or recommended action for a component of
+the home. Signals include words like: recommend, repair, replace, service,
+monitor, seal, clean, damaged, deteriorated, missing, loose, cracked, leaking,
+worn, corroded, improper, unsafe, end of life, past useful life.
+
+Many reports (but not all) group findings under ALL-CAPS section headings such
+as ROOF, EXTERIOR, GARAGE, ATTIC, INTERIOR, KITCHEN, LAUNDROMAT, BATHROOM,
+MECHANICAL, and phrase each as:
 
     Component Name:
     <what was observed>. This may <consequence>. Recommend <action>.
 
+Treat that as a hint, not a requirement. If the report is laid out differently,
+still extract every finding.
+
+COMPLETENESS IS THE PRIORITY
+A typical full inspection report contains 25-40 actionable findings. Work
+through the ENTIRE document section by section. Do NOT summarise, merge similar
+items, or stop early - missing a finding is the worst possible failure. If you
+believe there are genuinely no findings, re-read before returning an empty list.
+Only skip truly non-actionable text: "no deficiencies noted", inspector
+credentials, disclaimers, standards of practice, invoices.
+
+MATCH EACH FINDING TO THE COST CATALOG
+Below is BENi's catalog of known defects. For every finding, set catalogId to
+the single best-matching catalog id. Match on the DEFECT/CONDITION, not just the
+component name (e.g. a finding about soil sloping toward the house matches the
+"Negative slope toward foundation" entry). If nothing genuinely matches, set
+catalogId to null - never force a bad match, and never invent an id.
+
+CATALOG (id | system | component | defect)
+${catalogText}
+
 Extract ONE task per finding that a homeowner should act on.
 
 FIELD RULES
+- catalogId: the best-matching id from the CATALOG above, or null if none
+  genuinely matches. This is the most important field - it is what lets BENi
+  attach real researched costs instead of guesses.
 - title: short, action-first, specific. Good: "Reseal roof flashing at the chimney".
   Bad: "Roof issue". Never just repeat the component name.
 - issue: 1-2 plain sentences describing what is actually wrong. Write for a
