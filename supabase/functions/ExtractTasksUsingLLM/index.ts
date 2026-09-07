@@ -71,90 +71,80 @@ const SECTION_HEADERS = [
   'KITCHEN', 'LAUNDROMAT', 'LAUNDRY', 'BATHROOM', 'MECHANICAL',
 ];
 
-function buildSystemPrompt(catalogText: string): string {
-  return `You read home inspection reports and turn them into a homeowner's maintenance plan.
+/**
+ * STAGE 1 prompt - extraction only.
+ *
+ * Deliberately contains NO catalog. Asking one call to both find every finding
+ * AND match it to a 224-row catalog made the model lazy: completion tokens fell
+ * from ~1,737 to ~745 and it returned a third of the findings. One job per call.
+ */
+function buildExtractPrompt(): string {
+  return `You read home inspection reports and pull out EVERY actionable finding.
 
 WHAT COUNTS AS A FINDING (format-independent)
-Inspection reports vary by company and template. Do NOT rely on any single
-layout. A finding is ANY place the report describes an observed condition,
-defect, damage, wear, safety concern, or recommended action for a component of
-the home. Signals include words like: recommend, repair, replace, service,
-monitor, seal, clean, damaged, deteriorated, missing, loose, cracked, leaking,
-worn, corroded, improper, unsafe, end of life, past useful life.
+Reports vary by company and template - do not rely on any single layout. A
+finding is ANY place the report describes an observed condition, defect, damage,
+wear, safety concern, or recommended action for part of the home. Signals:
+recommend, repair, replace, service, monitor, seal, clean, damaged, deteriorated,
+missing, loose, cracked, leaking, worn, corroded, improper, unsafe, end of life.
 
-Many reports (but not all) group findings under ALL-CAPS section headings such
-as ROOF, EXTERIOR, GARAGE, ATTIC, INTERIOR, KITCHEN, LAUNDROMAT, BATHROOM,
-MECHANICAL, and phrase each as:
+Many reports group findings under ALL-CAPS headings (ROOF, EXTERIOR, GARAGE,
+ATTIC, INTERIOR, KITCHEN, LAUNDROMAT, BATHROOM, MECHANICAL) and phrase each as:
 
     Component Name:
     <what was observed>. This may <consequence>. Recommend <action>.
 
-Treat that as a hint, not a requirement. If the report is laid out differently,
-still extract every finding.
+Treat that as a hint, not a rule.
 
-COMPLETENESS IS THE PRIORITY
-A typical full inspection report contains 25-40 actionable findings. Work
-through the ENTIRE document section by section. Do NOT summarise, merge similar
-items, or stop early - missing a finding is the worst possible failure. If you
-believe there are genuinely no findings, re-read before returning an empty list.
-Only skip truly non-actionable text: "no deficiencies noted", inspector
-credentials, disclaimers, standards of practice, invoices.
+COMPLETENESS IS THE ONLY PRIORITY
+Extract every finding in the text you are given. Do NOT summarise, merge similar
+items, or stop early. Two similar-sounding problems in different locations are
+TWO findings. Missing one is the worst possible failure. Only skip genuinely
+non-actionable text: "no deficiencies noted", credentials, disclaimers,
+standards of practice, invoices.
 
-MATCH EACH FINDING TO THE COST CATALOG
-Below is BENi's catalog of known defects. For every finding, set catalogId to
-the single best-matching catalog id. Match on the DEFECT/CONDITION, not just the
-component name (e.g. a finding about soil sloping toward the house matches the
-"Negative slope toward foundation" entry). If nothing genuinely matches, set
-catalogId to null - never force a bad match, and never invent an id.
+FIELDS per finding
+- title: short, action-first, specific ("Reseal roof flashing at the chimney").
+  Never just repeat the component name.
+- issue: 1-2 plain sentences on what is wrong, for a homeowner.
+- fixRecommendation: 1-2 sentences on the fix, from the report's wording.
+- location: where it is, or null.
+- system: EXACTLY one of ${HOME_SYSTEMS.join(', ')} - judge by CONTENT:
+  wiring/outlets/panels -> electrical; pipes/drains/water heater -> plumbing;
+  furnace/AC/ducts -> hvac; roof/attic -> roof_attic; grading/siding/gutters/
+  garage -> exterior; kitchen/bathroom/living space -> interior.
+- severity: one of ${SEVERITIES.join(', ')} - best judgement.
+- costMin/costMax: rough CAD integers, or null.
+- dueDate: ISO YYYY-MM-DD only if the report states/implies one, else null.
+- timingNote: short and practical, or null.
+- recurrence: "Every 3 months" | "Every 6 months" | "Yearly" if it is recurring
+  upkeep, else null.
+
+Return ONLY valid JSON: { "tasks": [...] }. No markdown fences.`;
+}
+
+/**
+ * STAGE 2 prompt - matching only. Receives the short list of findings we already
+ * extracted plus the catalog, and does nothing but assign ids. Cheap and focused.
+ */
+function buildMatchPrompt(catalogText: string): string {
+  return `You match home inspection findings to BENi's cost catalog.
+
+You will be given a numbered list of findings. For EACH one, return the id of the
+single best-matching catalog entry, or null if nothing genuinely matches.
+
+Match on the DEFECT / CONDITION, not just the component name. Example: "the ground
+slopes toward the house" matches the "Negative slope toward foundation" entry.
+Never invent an id that is not in the catalog. Never force a poor match.
 
 CATALOG (id | system | component | defect)
 ${catalogText}
 
-Extract ONE task per finding that a homeowner should act on.
-
-FIELD RULES
-- catalogId: the best-matching id from the CATALOG above, or null if none
-  genuinely matches. This is the most important field - it is what lets BENi
-  attach real researched costs instead of guesses.
-- title: short, action-first, specific. Good: "Reseal roof flashing at the chimney".
-  Bad: "Roof issue". Never just repeat the component name.
-- issue: 1-2 plain sentences describing what is actually wrong. Write for a
-  homeowner, not an inspector. No jargon without explanation.
-- fixRecommendation: 1-2 sentences on the fix, based on the report's "Recommend..."
-  wording. Say who to call if relevant (e.g. "licensed electrician").
-- location: where it is (e.g. "Front eavestrough", "Right exterior"). null if unclear.
-- system: EXACTLY one of ${HOME_SYSTEMS.join(', ')}. Map by CONTENT first, then heading:
-    * anything about wiring/outlets/panels/breakers -> electrical
-    * anything about pipes/drains/water heater/faucets/toilets -> plumbing
-    * anything about furnace/AC/ducts/vents/thermostat -> hvac
-    * ROOF or ATTIC heading -> roof_attic
-    * EXTERIOR, GARAGE, grading, siding, gutters -> exterior
-    * KITCHEN, BATHROOM, LAUNDROMAT, INTERIOR (and not one of the above) -> interior
-  Never invent a value outside that list.
-- severity: EXACTLY one of ${SEVERITIES.join(', ')}.
-    * critical = safety hazard, active water intrusion, or something causing
-      ongoing damage (electrical shock risk, gas, structural, active leak).
-    * moderate = should be addressed soon; will worsen or cost more if ignored.
-    * minor = routine upkeep, cosmetic, or monitor-only.
-  Judge from the language and consequence, not from how long the entry is.
-- costMin / costMax: rough CAD estimate for the repair, as plain integers
-  (no currency symbols). Use typical Canadian contractor pricing. If you truly
-  cannot estimate, use null for both.
-- dueDate: ISO date (YYYY-MM-DD) ONLY if the report states or clearly implies a
-  deadline. Otherwise null. Do not invent dates.
-- timingNote: short, encouraging, practical rationale for when to do it
-  (e.g. "Best done before fall rains"). null if nothing sensible to say.
-- recurrence: if this is recurring upkeep, one of "Every 3 months",
-  "Every 6 months", "Yearly". Otherwise null.
-
-RULES
-- Skip anything that is not actionable: pure descriptions, "no deficiencies
-  noted", inspector credentials, disclaimers, standards of practice.
-- Do not duplicate the same underlying problem twice.
-- If the report is unreadable or contains no findings, return {"tasks": []}.
-
-Return ONLY valid JSON: { "tasks": ExtractedTask[] }. No markdown fences, no prose.`;
+Return ONLY valid JSON of the form:
+{ "matches": [ { "index": <number from the list>, "catalogId": "EX-001" | null } ] }
+Include an entry for EVERY finding you were given.`;
 }
+
 
 // ---------------------------------------------------------------------------
 // PDF text repair
@@ -265,18 +255,11 @@ function describeOpenAiError(status: number, body: string): string {
   return `AI request failed (${status}). ${message}`;
 }
 
-async function callLLM(
-  reportText: string,
-  description: string,
-  catalogText: string,
-): Promise<ExtractedTask[]> {
+/** One JSON chat call, with retry/backoff for genuinely transient failures. */
+async function chatJSON(system: string, user: string, label: string): Promise<Record<string, unknown>> {
   const apiKey = Deno.env.get('OPENAI_API_KEY');
   if (!apiKey) throw new Error('OPENAI_API_KEY is not configured in Edge Function secrets.');
-
   const model = Deno.env.get('OPENAI_MODEL') ?? 'gpt-4o-mini';
-  const userContent =
-    (description ? `Notes from the homeowner: ${description}\n\n` : '') +
-    `Inspection report:\n${reportText}`;
 
   const MAX_ATTEMPTS = 3;
   let lastError = '';
@@ -287,48 +270,135 @@ async function callLLM(
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model,
-        temperature: 0.1, // deterministic-ish: we want consistent extraction, not creativity
+        temperature: 0.1,
         response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: buildSystemPrompt(catalogText) },
-          { role: 'user', content: userContent },
+          { role: 'system', content: system },
+          { role: 'user', content: user },
         ],
       }),
     });
 
     if (response.ok) {
       const completion = await response.json();
-      const content = completion.choices?.[0]?.message?.content ?? '{"tasks":[]}';
       const usage = completion.usage;
       if (usage) {
         console.log(
-          `LLM ok — model=${model} prompt_tokens=${usage.prompt_tokens} ` +
-          `completion_tokens=${usage.completion_tokens}`,
+          `LLM ok [${label}] - model=${model} prompt_tokens=${usage.prompt_tokens} completion_tokens=${usage.completion_tokens}`
         );
       }
-      let parsed: { tasks?: unknown };
+      const content = completion.choices?.[0]?.message?.content ?? '{}';
       try {
-        parsed = JSON.parse(content);
+        return JSON.parse(content);
       } catch {
         throw new Error('The AI returned malformed JSON. Please try again.');
       }
-      return Array.isArray(parsed.tasks) ? (parsed.tasks as ExtractedTask[]) : [];
     }
 
     const body = await response.text();
     lastError = describeOpenAiError(response.status, body);
-    console.error(`LLM attempt ${attempt}/${MAX_ATTEMPTS} failed (${response.status}): ${body.slice(0, 500)}`);
+    console.error(`LLM [${label}] attempt ${attempt}/${MAX_ATTEMPTS} failed (${response.status}): ${body.slice(0, 300)}`);
 
-    // Only retry things that might succeed on a second try. A quota/auth problem
-    // will never fix itself, so fail fast and tell the user.
     const retryable = response.status >= 500 ||
       (response.status === 429 && !/insufficient_quota/i.test(body));
     if (!retryable || attempt === MAX_ATTEMPTS) break;
-
-    await sleep(1000 * 2 ** (attempt - 1)); // 1s, 2s
+    await sleep(1000 * 2 ** (attempt - 1));
   }
 
   throw new Error(lastError || 'AI request failed.');
+}
+
+/**
+ * Split the report so each extraction call sees a small, focused slice.
+ * Long documents are where recall collapses: the model skims. Sectioning by the
+ * report's own ALL-CAPS headings keeps each call short and specific.
+ */
+const MAX_CHUNK_CHARS = 7000;
+
+function splitIntoChunks(text: string): string[] {
+  const lines = text.split('\n');
+  const headerRe = new RegExp(`^(${SECTION_HEADERS.join('|')})$`, 'i');
+
+  const boundaries: number[] = [];
+  lines.forEach((line, i) => {
+    if (headerRe.test(line.trim())) boundaries.push(i);
+  });
+
+  let sections: string[] = [];
+  if (boundaries.length >= 3) {
+    boundaries.forEach((b, i) => {
+      const next = i + 1 < boundaries.length ? boundaries[i + 1] : lines.length;
+      const body = lines.slice(b, next).join('\n').trim();
+      if (body.length > 0) sections.push(body);
+    });
+    const head = lines.slice(0, boundaries[0]).join('\n').trim();
+    if (head.length > 400) sections.unshift(head);
+  } else {
+    sections = [text];
+  }
+
+  // Hard-split anything still too long so no single call gets a wall of text.
+  const chunks: string[] = [];
+  for (const sec of sections) {
+    if (sec.length <= MAX_CHUNK_CHARS) { chunks.push(sec); continue; }
+    for (let i = 0; i < sec.length; i += MAX_CHUNK_CHARS) {
+      chunks.push(sec.slice(i, i + MAX_CHUNK_CHARS));
+    }
+  }
+  return chunks.filter((c) => c.trim().length > 50);
+}
+
+/** STAGE 1: extract findings from every chunk in parallel, then de-duplicate. */
+async function extractFindings(reportText: string, description: string): Promise<ExtractedTask[]> {
+  const chunks = splitIntoChunks(reportText);
+  console.log(`Split report into ${chunks.length} chunk(s) for extraction.`);
+
+  const perChunk = await Promise.all(
+    chunks.map(async (chunk, i) => {
+      const user = (description && i === 0 ? `Notes from the homeowner: ${description}\n\n` : '') + `Report section ${i + 1} of ${chunks.length}:\n\n${chunk}`;
+      try {
+        const res = await chatJSON(buildExtractPrompt(), user, `extract ${i + 1}/${chunks.length}`);
+        return Array.isArray(res?.tasks) ? (res.tasks as ExtractedTask[]) : [];
+      } catch (err) {
+        console.error(`Chunk ${i + 1} extraction failed: ${(err as Error).message}`);
+        return [];
+      }
+    }),
+  );
+
+  // De-duplicate: the same finding can appear in overlapping slices.
+  const seen = new Set<string>();
+  const merged: ExtractedTask[] = [];
+  for (const t of perChunk.flat()) {
+    if (!t || typeof t.title !== 'string') continue;
+    const key = t.title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(t);
+  }
+  return merged;
+}
+
+/** STAGE 2: one focused call that only assigns catalog ids. */
+async function matchFindings(tasks: ExtractedTask[], catalogText: string): Promise<void> {
+  if (tasks.length === 0 || !catalogText) return;
+  const list = tasks
+    .map((t, i) => `${i}. ${t.title} - ${t.issue ?? ''} [${t.system ?? 'unknown'}]`)
+    .join('\n');
+  try {
+    const res = await chatJSON(buildMatchPrompt(catalogText), list, 'match');
+    const matches = Array.isArray((res as { matches?: unknown }).matches)
+      ? ((res as { matches: { index?: number; catalogId?: string | null }[] }).matches)
+      : [];
+    for (const m of matches) {
+      const i = Number(m?.index);
+      if (Number.isInteger(i) && i >= 0 && i < tasks.length) {
+        tasks[i].catalogId = m?.catalogId ?? null;
+      }
+    }
+  } catch (err) {
+    console.error(`Catalog matching failed (continuing unmatched): ${(err as Error).message}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -446,7 +516,10 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const tasks = sanitizeAndEnrich(await callLLM(text, description, catalogText), catalog);
+    // Stage 1: find everything. Stage 2: label it against the catalog.
+    const findings = await extractFindings(text, description);
+    await matchFindings(findings, catalogText);
+    const tasks = sanitizeAndEnrich(findings, catalog);
     const matched = tasks.filter((t) => t.catalogId).length;
     console.log(
       `Extracted ${tasks.length} tasks; ${matched} matched to catalog, ` +

@@ -143,9 +143,10 @@ export default function DashboardScreen() {
 
   const filterOptions: ChipOption[] = [
     { label: `All (${scopedTasks.length})`, value: null },
+    // Show all six systems even at zero, so the filter row is predictable and a
+    // homeowner can see which parts of the home currently have nothing open.
     ...SYSTEMS
       .map((s) => ({ label: s.label, value: s.value as string, count: scopedTasks.filter((t) => t.system === s.value).length }))
-      .filter((s) => s.count > 0)
       .map((s) => ({ label: `${s.label} (${s.count})`, value: s.value })),
     ...(unassignedCount > 0 ? [{ label: `Other (${unassignedCount})`, value: UNASSIGNED }] : []),
   ];
