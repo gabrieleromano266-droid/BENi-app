@@ -47,16 +47,32 @@ type ExtractedTask = {
   costMax: number | null;
   timingNote: string | null;
   recurrence: string | null;
+  catalogId: string | null;
 };
 
 // Section headings used by the target inspection format. Findings live under
 // these; everything before the first one is front matter.
+type CatalogRow = {
+  id: string;
+  system: string;
+  component: string;
+  defect: string;
+  location: string | null;
+  meaning: string | null;
+  severity: string | null;
+  urgency: string | null;
+  cost_low: number | null;
+  cost_typical: number | null;
+  cost_high: number | null;
+};
+
 const SECTION_HEADERS = [
   'CONDUCT', 'ROOF', 'EXTERIOR', 'GARAGE', 'ATTIC', 'INTERIOR',
   'KITCHEN', 'LAUNDROMAT', 'LAUNDRY', 'BATHROOM', 'MECHANICAL',
 ];
 
-const SYSTEM_PROMPT = `You read home inspection reports and turn them into a homeowner's maintenance plan.
+function buildSystemPrompt(catalogText: string): string {
+  return `You read home inspection reports and turn them into a homeowner's maintenance plan.
 
 REPORT FORMAT YOU WILL SEE
 The report is organised under ALL-CAPS section headings (ROOF, EXTERIOR, GARAGE,
@@ -107,6 +123,7 @@ RULES
 - If the report is unreadable or contains no findings, return {"tasks": []}.
 
 Return ONLY valid JSON: { "tasks": ExtractedTask[] }. No markdown fences, no prose.`;
+}
 
 // ---------------------------------------------------------------------------
 // PDF text repair
@@ -217,7 +234,11 @@ function describeOpenAiError(status: number, body: string): string {
   return `AI request failed (${status}). ${message}`;
 }
 
-async function callLLM(reportText: string, description: string): Promise<ExtractedTask[]> {
+async function callLLM(
+  reportText: string,
+  description: string,
+  catalogText: string,
+): Promise<ExtractedTask[]> {
   const apiKey = Deno.env.get('OPENAI_API_KEY');
   if (!apiKey) throw new Error('OPENAI_API_KEY is not configured in Edge Function secrets.');
 
@@ -238,7 +259,7 @@ async function callLLM(reportText: string, description: string): Promise<Extract
         temperature: 0.1, // deterministic-ish: we want consistent extraction, not creativity
         response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'system', content: buildSystemPrompt(catalogText) },
           { role: 'user', content: userContent },
         ],
       }),
@@ -283,19 +304,22 @@ async function callLLM(reportText: string, description: string): Promise<Extract
 // Normalisation — never trust the model's shape blindly
 // ---------------------------------------------------------------------------
 
-function sanitize(tasks: ExtractedTask[]): ExtractedTask[] {
-  const asInt = (v: unknown): number | null => {
-    const n = typeof v === 'string' ? Number(v.replace(/[^0-9.]/g, '')) : Number(v);
-    return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
-  };
-  const str = (v: unknown): string | null => {
-    const s = typeof v === 'string' ? v.trim() : '';
-    return s.length ? s : null;
-  };
+const asInt = (v: unknown): number | null => {
+  const n = typeof v === 'string' ? Number(v.replace(/[^0-9.]/g, '')) : Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+};
+const str = (v: unknown): string | null => {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return s.length ? s : null;
+};
 
+function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogRow>): ExtractedTask[] {
   return tasks
     .filter((t) => t && typeof t.title === 'string' && t.title.trim().length > 0)
-    .map((t) => ({
+    .map((t) => {
+      const cid = str(t.catalogId);
+      const match = cid ? catalog.get(cid) : undefined;
+      const base: ExtractedTask = {
       title: t.title.trim().slice(0, 200),
       dueDate: /^\d{4}-\d{2}-\d{2}$/.test(String(t.dueDate ?? '')) ? String(t.dueDate) : null,
       system: (HOME_SYSTEMS as readonly string[]).includes(String(t.system)) ? t.system : null,
@@ -307,7 +331,28 @@ function sanitize(tasks: ExtractedTask[]): ExtractedTask[] {
       costMax: asInt(t.costMax),
       timingNote: str(t.timingNote),
       recurrence: str(t.recurrence),
-    }));
+      catalogId: match ? match.id : null,   // drop hallucinated ids
+      };
+
+      if (!match) return base;
+
+      // Researched catalog values win over the model's guesses.
+      return {
+        ...base,
+        system: (HOME_SYSTEMS as readonly string[]).includes(match.system)
+          ? (match.system as ExtractedTask['system'])
+          : base.system,
+        severity: (SEVERITIES as readonly string[]).includes(String(match.severity))
+          ? (match.severity as ExtractedTask['severity'])
+          : base.severity,
+        costMin: match.cost_low ?? base.costMin,
+        costMax: match.cost_high ?? base.costMax,
+        location: base.location ?? match.location,
+        // The catalog's homeowner-language wording beats a paraphrase of jargon.
+        issue: match.meaning ?? base.issue,
+        timingNote: base.timingNote ?? (match.urgency ? `Typical timeframe: ${match.urgency}` : null),
+      };
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +386,20 @@ Deno.serve(async (req: Request) => {
       throw new Error(`Could not download the uploaded file. ${downloadError?.message ?? ''}`.trim());
     }
 
+    // Load the catalog the model matches findings against.
+    const { data: catalogRows, error: catalogError } = await supabase
+      .from('cost_catalog')
+      .select('id, system, component, defect, location, meaning, severity, urgency, cost_low, cost_typical, cost_high');
+    if (catalogError) console.error('cost_catalog load failed:', catalogError.message);
+
+    const catalog = new Map<string, CatalogRow>();
+    for (const row of ((catalogRows ?? []) as CatalogRow[])) catalog.set(row.id, row);
+
+    // Compact one-line-per-entry form keeps the prompt affordable.
+    const catalogText = ((catalogRows ?? []) as CatalogRow[])
+      .map((r) => `${r.id} | ${r.system} | ${r.component} | ${r.defect}`)
+      .join('\n');
+
     const pdfBytes = new Uint8Array(await fileBlob.arrayBuffer());
     const rawText = await extractPdfText(pdfBytes);
     const { text, rawChars, finalChars } = preparePdfText(rawText);
@@ -356,8 +415,12 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const tasks = sanitize(await callLLM(text, description));
-    console.log(`Extracted ${tasks.length} tasks.`);
+    const tasks = sanitizeAndEnrich(await callLLM(text, description, catalogText), catalog);
+    const matched = tasks.filter((t) => t.catalogId).length;
+    console.log(
+      `Extracted ${tasks.length} tasks; ${matched} matched to catalog, ` +
+      `${tasks.length - matched} unmatched. catalog_size=${catalog.size}`,
+    );
 
     return new Response(JSON.stringify({ tasks }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

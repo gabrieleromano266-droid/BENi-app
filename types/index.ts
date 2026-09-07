@@ -34,6 +34,8 @@ export type TaskType = {
   timingNote?: string | null;
   /** e.g. \"Every 3 months\" — recurring upkeep surfaced by the extractor */
   recurrence?: string | null;
+  /** id of the matched public.cost_catalog row, null when unmatched */
+  catalogId?: string | null;
 };
 
 /** Raw DB row from the tasks table */
@@ -57,6 +59,7 @@ export type DBTask = {
   cost_max: number | null;
   timing_note: string | null;
   recurrence: string | null;
+  catalog_id?: string | null;
 };
 
 /** DBTask enriched with the property name (used on dashboard) */

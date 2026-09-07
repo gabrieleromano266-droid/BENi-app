@@ -20,6 +20,8 @@ export type ExtractedTask = {
   costMax: number | null;
   timingNote: string | null;
   recurrence: string | null;
+  /** matched cost_catalog id, or null when the finding is not in the catalog */
+  catalogId: string | null;
 };
 
 /**
