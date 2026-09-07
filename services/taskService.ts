@@ -77,6 +77,17 @@ export async function fetchTasksForProperty(propertyId: string): Promise<DBTask[
   return sortByDueDate(data || []);
 }
 
+/** Fetch COMPLETED tasks (most recently completed first) for the "Completed" view. */
+export async function fetchCompletedTasksForUser(userId: string): Promise<DBTask[]> {
+  const { data } = await supabase
+    .from('tasks')
+    .select(TASK_FIELDS)
+    .eq('user_id', userId)
+    .not('completed_at', 'is', null)
+    .order('completed_at', { ascending: false });
+  return data || [];
+}
+
 /** Count completed tasks for a user, optionally scoped to one property (dashboard "Completed" stat) */
 export async function fetchCompletedTaskCount(userId: string, propertyId?: string | null): Promise<number> {
   let query = supabase

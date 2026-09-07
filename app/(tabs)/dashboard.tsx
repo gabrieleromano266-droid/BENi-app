@@ -17,7 +17,8 @@ import { fetchFirstName } from '@/services/profileService';
 import { fetchProperties } from '@/services/propertyService';
 import { supabase } from '@/services/supabase';
 import {
-  completeTask, createTask, deleteTasks, fetchAllTasksForUser, fetchCompletedTaskCount, TaskInput,
+  completeTask, createTask, deleteTasks, fetchAllTasksForUser, fetchCompletedTaskCount,
+  fetchCompletedTasksForUser, TaskInput,
 } from '@/services/taskService';
 import { BREAKPOINT, SIDEBAR_BREAKPOINT, SIDEBAR_WIDTH } from '@/theme/layout';
 import { useTheme } from '@/theme/ThemeContext';
@@ -43,6 +44,9 @@ export default function DashboardScreen() {
   const [firstName, setFirstName] = useState('');
   const [properties, setProperties] = useState<Property[]>([]);
   const [allTasks, setAllTasks] = useState<TaskRow[]>([]);
+  // Completed tasks are kept separate so they never skew the open-task
+  // counts or the Home Health Score.
+  const [completedTasks, setCompletedTasks] = useState<TaskRow[]>([]);
   const [loadingProperties, setLoadingProperties] = useState(true);
   const [loadingTasks, setLoadingTasks] = useState(true);
   const [completedCount, setCompletedCount] = useState(0);
@@ -87,6 +91,8 @@ export default function DashboardScreen() {
   const loadTasks = async (uid: string) => {
     setLoadingTasks(true);
     setAllTasks(await fetchAllTasksForUser(uid));
+    const done = await fetchCompletedTasksForUser(uid);
+    setCompletedTasks(done.map((t) => ({ ...t, propertyName: '', fileName: '' })));
     setLoadingTasks(false);
   };
 
@@ -162,11 +168,21 @@ export default function DashboardScreen() {
       case 'recurring': return !!t.recur_frequency;
       // The plan lists only OPEN tasks, so nothing here is "completed" — loading
       // completed tasks would need a services/ change, which is out of scope.
-      case 'completed': return false;
+      case 'completed': return true; // handled via completedScoped below
       default: return true;
     }
   };
-  const displayedTasks = scopedTasks.filter((t) => matchesSystem(t) && matchesSeverity(t));
+
+  const completedScoped = selectedPropertyId
+    ? completedTasks.filter((t) => t.property_id === selectedPropertyId)
+    : completedTasks;
+
+  // The Completed tile swaps the list over to finished work rather than filtering
+  // the open plan (which by definition contains none of it).
+  const displayedTasks =
+    severityFilter === 'completed'
+      ? completedScoped.filter(matchesSystem)
+      : scopedTasks.filter((t) => matchesSystem(t) && matchesSeverity(t));
 
   const pendingDeleteTaskTitle = allTasks.find((t) => t.id === pendingDeleteTaskIds[0])?.title;
   const selectedProperty = selectedPropertyId ? properties.find((p) => p.id === selectedPropertyId) : null;

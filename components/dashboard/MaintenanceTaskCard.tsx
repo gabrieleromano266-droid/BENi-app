@@ -5,6 +5,7 @@
  * from components/TaskItem.tsx (used by Maintenance/property pages) so that
  * screen's inline-edit behavior stays untouched.
  */
+import Button from '@/components/Button';
 import { FREQ_LABELS } from '@/constants/recurrence';
 import { SYSTEM_ICONS, SYSTEM_LABELS } from '@/constants/systems';
 import { useTheme } from '@/theme/ThemeContext';
@@ -22,6 +23,13 @@ type Props = {
   onComplete: () => void;
   onDelete: () => void;
 };
+
+/**
+ * Cost is deliberately NOT folded into severity: severity answers "how urgent /
+ * how dangerous", this answers "how expensive". A $12k repipe can be a moderate
+ * that still deserves budgeting attention.
+ */
+const MAJOR_EXPENSE_THRESHOLD = 5000;
 
 const SEVERITY_BADGE: Record<TaskSeverity, { bg: keyof Colors; text: keyof Colors }> = {
   critical: { bg: 'severityCriticalBg', text: 'severityCriticalText' },
@@ -53,6 +61,7 @@ export default function MaintenanceTaskCard({ task, showProperty, onComplete, on
   const icon = task.system ? SYSTEM_ICONS[task.system] : 'build';
   const systemLabel = task.system ? SYSTEM_LABELS[task.system] : null;
   const cost = formatCost(task.cost_min, task.cost_max);
+  const isMajorExpense = (task.cost_max ?? 0) >= MAJOR_EXPENSE_THRESHOLD;
   const doItBy = formatDoItBy(task.due_date, task.timing_note);
 
   return (
@@ -101,6 +110,12 @@ export default function MaintenanceTaskCard({ task, showProperty, onComplete, on
           </View>
         </View>
 
+        {isMajorExpense && (
+          <View style={[styles.badge, { backgroundColor: colors.infoLight }]}>
+            <Text style={[styles.badgeText, { color: colors.info }]}>$$$</Text>
+          </View>
+        )}
+
         {!!task.severity && (
           <View style={[styles.badge, { backgroundColor: colors[SEVERITY_BADGE[task.severity].bg] }]}>
             <Text style={[styles.badgeText, { color: colors[SEVERITY_BADGE[task.severity].text] }]}>
@@ -123,17 +138,24 @@ export default function MaintenanceTaskCard({ task, showProperty, onComplete, on
           {!!task.fix_recommendation && (
             <DetailRow label="How to fix it" value={task.fix_recommendation} colors={colors} />
           )}
-          {!!cost && <DetailRow label="Est. cost" value={cost} colors={colors} bold />}
+          {!!cost && (
+            <DetailRow
+              label="Est. cost"
+              value={isMajorExpense ? `${cost}  ·  major expense` : cost}
+              colors={colors}
+              bold
+            />
+          )}
           {!!doItBy && <DetailRow label="Do it by" value={doItBy} colors={colors} accent />}
 
           <View style={styles.actions}>
-            <IconButton
-              icon="check-circle-outline"
-              iconSize={16}
-              size={30}
+            <Button
+              title="Complete"
+              variant="success"
+              size="sm"
               onPress={onComplete}
-              iconColor={colors.success}
-              style={{ backgroundColor: 'transparent' }}
+              leftIcon={<MaterialIcons name="check" size={15} color="#fff" />}
+              style={styles.completeBtn}
             />
             <IconButton
               icon="delete-outline"
@@ -222,6 +244,9 @@ const styles = StyleSheet.create({
   recurText: {
     fontSize: 10,
     fontWeight: '600',
+  },
+  completeBtn: {
+    paddingHorizontal: spacing.md,
   },
   badge: {
     paddingHorizontal: 10,
