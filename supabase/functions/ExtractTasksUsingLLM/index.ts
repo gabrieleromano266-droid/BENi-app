@@ -135,9 +135,25 @@ single best-matching catalog entry, or null if nothing genuinely matches.
 
 Match on the DEFECT / CONDITION, not just the component name. Example: "the ground
 slopes toward the house" matches the "Negative slope toward foundation" entry.
+
+RETURNING null IS THE RIGHT ANSWER MORE OFTEN THAN YOU THINK.
+Only match when BOTH the component AND the defect genuinely correspond. If the
+catalog has no entry for the thing described, return null. Real failures seen:
+  - "damaged exterior vent" was matched to "Vinyl Siding - hail damage" ($9k-$22k).
+    A single vent is NOT whole-house siding. Correct answer: null.
+  - "deteriorated backyard fence" was matched to "Vinyl Siding - full replacement".
+    A fence is not cladding, and there is no fence entry. Correct answer: null.
+
+RESPECT SCALE AND SEVERITY WORDS.
+A "minor", "small", "hairline" or "cosmetic" problem must NOT be matched to a
+catastrophic entry. "Seal minor foundation cracks" is the hairline-crack entry
+(a few hundred dollars), NOT "horizontal crack with inward bowing" ($20k).
+Sanity-check the cost shown for each entry: if it looks wildly out of proportion
+to the finding described, it is the wrong entry - return null instead.
+
 Never invent an id that is not in the catalog. Never force a poor match.
 
-CATALOG (id | system | component | defect)
+CATALOG (id | system | component | defect | typical cost CAD)
 ${catalogText}
 
 Return ONLY valid JSON of the form:
@@ -414,6 +430,34 @@ const str = (v: unknown): string | null => {
   return s.length ? s : null;
 };
 
+/**
+ * Two findings that matched the SAME catalog entry in the SAME system are the
+ * same underlying problem worded differently - e.g. the report yielded "repair
+ * wood rot on deck surface", "repair backyard deck materials" and "repair wood
+ * rot on backyard deck", all matching EX-023. Keep the richest one.
+ */
+function mergeSameCatalogEntry(tasks: ExtractedTask[]): ExtractedTask[] {
+  const byKey = new Map<string, ExtractedTask>();
+  const out: ExtractedTask[] = [];
+  let merged = 0;
+
+  const detail = (t: ExtractedTask) =>
+    (t.issue?.length ?? 0) + (t.fixRecommendation?.length ?? 0) + (t.location?.length ?? 0);
+
+  for (const t of tasks) {
+    if (!t?.catalogId) { out.push(t); continue; }      // unmatched stay distinct
+    const key = `${t.catalogId}|${t.system ?? ''}`;
+    const existing = byKey.get(key);
+    if (!existing) { byKey.set(key, t); out.push(t); continue; }
+    merged++;
+    if (detail(t) > detail(existing)) {
+      Object.assign(existing, t);                       // keep the fuller wording
+    }
+  }
+  if (merged > 0) console.log(`Merged ${merged} duplicate finding(s) sharing a catalog entry.`);
+  return out;
+}
+
 function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogRow>): ExtractedTask[] {
   return tasks
     .filter((t) => t && typeof t.title === 'string' && t.title.trim().length > 0)
@@ -436,6 +480,19 @@ function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogR
       };
 
       if (!match) return base;
+
+      // Magnitude sanity check. The model estimated a cost itself in stage 1;
+      // if the catalog entry it picked is an order of magnitude more expensive,
+      // it almost certainly matched a whole-system replacement to a small repair
+      // (e.g. a damaged vent -> full vinyl siding). Reject rather than mislead.
+      const ownMax = base.costMax;
+      if (ownMax && match.cost_high && match.cost_high > ownMax * 5) {
+        console.log(
+          `Rejected match ${match.id} for "${base.title}": catalog $${match.cost_high} ` +
+          `vs model estimate $${ownMax} (>5x).`,
+        );
+        return base;
+      }
 
       // Researched catalog values win over the model's guesses.
       return {
@@ -498,7 +555,7 @@ Deno.serve(async (req: Request) => {
 
     // Compact one-line-per-entry form keeps the prompt affordable.
     const catalogText = ((catalogRows ?? []) as CatalogRow[])
-      .map((r) => `${r.id} | ${r.system} | ${r.component} | ${r.defect}`)
+      .map((r) => `${r.id} | ${r.system} | ${r.component} | ${r.defect} | $${r.cost_typical ?? '?'}`)
       .join('\n');
 
     const pdfBytes = new Uint8Array(await fileBlob.arrayBuffer());
@@ -519,7 +576,8 @@ Deno.serve(async (req: Request) => {
     // Stage 1: find everything. Stage 2: label it against the catalog.
     const findings = await extractFindings(text, description);
     await matchFindings(findings, catalogText);
-    const tasks = sanitizeAndEnrich(findings, catalog);
+    const deduped = mergeSameCatalogEntry(findings);
+    const tasks = sanitizeAndEnrich(deduped, catalog);
     const matched = tasks.filter((t) => t.catalogId).length;
     console.log(
       `Extracted ${tasks.length} tasks; ${matched} matched to catalog, ` +
