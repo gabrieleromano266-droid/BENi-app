@@ -4,6 +4,8 @@ import Dropdown from '@/components/Dropdown';
 import { useTheme } from '@/theme/ThemeContext';
 import { fontSize, radius, spacing } from '@/theme/tokens';
 import { RecurAnchor, RecurFrequency, TaskType } from '@/types';
+import * as DocumentPicker from 'expo-document-picker';
+import { FileUploadZone } from '@/components/upload/FileUploadZone';
 import { ANCHOR_OPTIONS, FREQ_LABELS, FREQ_OPTIONS } from '@/constants/recurrence';
 import { computeNextDueDate } from '@/utils/taskUtils';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
@@ -12,6 +14,8 @@ import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TouchableOpacity
 
 export type CompleteResult = {
   nextDueDate: Date | null;
+  /** Optional receipt / invoice / before-after photo captured at completion. */
+  proof?: { uri: string; name: string } | null;
   newFrequency?: RecurFrequency | null;
   newAnchor?: RecurAnchor | null;
 };
@@ -24,6 +28,25 @@ type Props = {
 };
 
 export default function CompleteTaskModal({ visible, task, onClose, onComplete }: Props) {
+  // Proof of work: a receipt, invoice or before/after photo. Optional - never
+  // block completing a task on having paperwork to hand.
+  const [proof, setProof] = useState<{ uri: string; name: string } | null>(null);
+
+  useEffect(() => {
+    if (!visible) setProof(null);
+  }, [visible]);
+
+  const pickProof = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ['application/pdf', 'image/*'],
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
+    if (result.canceled) return;
+    const f = result.assets[0];
+    setProof({ uri: f.uri, name: f.name });
+  };
+
   const { colors } = useTheme();
   const [clearRecur, setClearRecur] = useState(false);
   const isRecurring = !!task?.recurFrequency && !clearRecur;
@@ -62,7 +85,7 @@ export default function CompleteTaskModal({ visible, task, onClose, onComplete }
   const handleComplete = async (result: CompleteResult) => {
     setLoading(true);
     try {
-      await onComplete(result);
+      await onComplete({ ...result, proof });
     } finally {
       setLoading(false);
     }
@@ -149,6 +172,18 @@ export default function CompleteTaskModal({ visible, task, onClose, onComplete }
                 </>
               )}
 
+              {/* Optional proof of work. Kept last so it never gets in the way of
+                  simply ticking something off. */}
+              <Text style={[styles.proofLabel, { color: colors.textMuted }]}>
+                Keep a record (optional) — receipt, invoice or a before/after photo
+              </Text>
+              <FileUploadZone
+                onPickFile={pickProof}
+                onClearFile={() => setProof(null)}
+                uploading={false}
+                fileName={proof?.name}
+              />
+
               <View style={styles.btnGroup}>
                 <Button
                   title={isRecurring ? 'Complete & Schedule Next' : newFreq ? 'Complete & Recur' : 'Mark as Complete'}
@@ -224,6 +259,10 @@ const styles = StyleSheet.create({
   },
   loader: {
     marginVertical: spacing.lg,
+  },
+  proofLabel: {
+    fontSize: fontSize.sm,
+    marginBottom: spacing.xs,
   },
   btnGroup: {
     gap: spacing.sm,

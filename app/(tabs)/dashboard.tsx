@@ -13,6 +13,7 @@ import InfoPopup from '@/components/InfoPopup';
 import PageContainer from '@/components/PageContainer';
 import PageHeader from '@/components/PageHeader';
 import { SYSTEMS } from '@/constants/systems';
+import { uploadTaskDocument } from '@/services/fileService';
 import { fetchFirstName } from '@/services/profileService';
 import { fetchProperties } from '@/services/propertyService';
 import { supabase } from '@/services/supabase';
@@ -108,7 +109,19 @@ export default function DashboardScreen() {
 
   const handleCompleteTask = async (result: CompleteResult) => {
     if (!completingTask || !userId) return;
+    const completedId = completingTask.id;
+    const completedPropertyId = completingTask.property_id;
     const nextTask = await completeTask(completingTask, userId, result.nextDueDate, result.newFrequency, result.newAnchor);
+
+    // Store the receipt/photo against the task we just closed. Never let a
+    // failed upload lose the completion itself.
+    if (result.proof) {
+      try {
+        await uploadTaskDocument(userId, completedId, completedPropertyId, result.proof.uri, result.proof.name);
+      } catch (err) {
+        console.error('Could not attach the completion document:', err);
+      }
+    }
     setAllTasks((prev) => {
       const without = prev.filter((t) => t.id !== completingTask.id);
       if (!nextTask) return without;
@@ -142,17 +155,32 @@ export default function DashboardScreen() {
   const unassignedCount = scopedTasks.filter((t) => !t.system).length;
 
   // Tapping a stat tile toggles that filter (re-tapping the active one clears it)
-  const toggleSeverity = (key: string) => setSeverityFilter((prev) => (prev === key ? null : key));
+  const toggleSeverity = (key: string) =>
+    setSeverityFilter((prev) => {
+      const next = prev === key ? null : key;
+      // Entering/leaving the Completed view resets the system chip. Without this
+      // a stale chip like "Plumbing (0)" makes the list look empty even though
+      // completed tasks exist.
+      if (next === 'completed' || prev === 'completed') setSystemFilter(null);
+      return next;
+    });
 
   const { overall, bySystem } = computeHealthScores(scopedTasks);
   const startHere = getStartHereSuggestion(scopedTasks, bySystem);
 
+  const completedScoped = selectedPropertyId
+    ? completedTasks.filter((t) => t.property_id === selectedPropertyId)
+    : completedTasks;
+
+  // In the Completed view the chips must count completed tasks, not open ones.
+  const chipSource = severityFilter === 'completed' ? completedScoped : scopedTasks;
+
   const filterOptions: ChipOption[] = [
-    { label: `All (${scopedTasks.length})`, value: null },
+    { label: `All (${chipSource.length})`, value: null },
     // Show all six systems even at zero, so the filter row is predictable and a
     // homeowner can see which parts of the home currently have nothing open.
     ...SYSTEMS
-      .map((s) => ({ label: s.label, value: s.value as string, count: scopedTasks.filter((t) => t.system === s.value).length }))
+      .map((s) => ({ label: s.label, value: s.value as string, count: chipSource.filter((t) => t.system === s.value).length }))
       .map((s) => ({ label: `${s.label} (${s.count})`, value: s.value })),
     ...(unassignedCount > 0 ? [{ label: `Other (${unassignedCount})`, value: UNASSIGNED }] : []),
   ];
@@ -172,10 +200,6 @@ export default function DashboardScreen() {
       default: return true;
     }
   };
-
-  const completedScoped = selectedPropertyId
-    ? completedTasks.filter((t) => t.property_id === selectedPropertyId)
-    : completedTasks;
 
   // The Completed tile swaps the list over to finished work rather than filtering
   // the open plan (which by definition contains none of it).

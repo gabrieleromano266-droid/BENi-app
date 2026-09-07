@@ -24,6 +24,8 @@ export type TaskType = {
   fileId?: string | null;
   recurFrequency?: RecurFrequency | null;
   recurAnchor?: RecurAnchor | null;
+  /** multiplier on recurFrequency: monthly x3 = every 3 months */
+  recurInterval?: number | null;
   system?: HomeSystem | null;
   severity?: TaskSeverity | null;
   location?: string | null;
@@ -49,6 +51,7 @@ export type DBTask = {
   file_id: string | null;
   recur_frequency: RecurFrequency | null;
   recur_anchor: RecurAnchor | null;
+  recur_interval?: number | null;
   completed_at: string | null;
   system: HomeSystem | null;
   severity: TaskSeverity | null;

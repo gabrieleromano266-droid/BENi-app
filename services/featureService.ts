@@ -66,6 +66,10 @@ export async function addFeatureToProperty(
         description: st.description ?? null,
         recur_frequency: st.recur_frequency ?? null,
         recur_anchor: st.recur_anchor ?? null,
+        recur_interval: st.recur_interval ?? 1,
+        system: st.system ?? null,
+        cost_min: st.cost_min ?? null,
+        cost_max: st.cost_max ?? null,
       })),
     )
     .select(TASK_FIELDS);

@@ -6,7 +6,7 @@
  * screen's inline-edit behavior stays untouched.
  */
 import Button from '@/components/Button';
-import { FREQ_LABELS } from '@/constants/recurrence';
+import { cadenceLabel, FREQ_LABELS } from '@/constants/recurrence';
 import { SYSTEM_ICONS, SYSTEM_LABELS } from '@/constants/systems';
 import { useTheme } from '@/theme/ThemeContext';
 import { fontSize, radius, spacing } from '@/theme/tokens';
@@ -103,7 +103,7 @@ export default function MaintenanceTaskCard({ task, showProperty, onComplete, on
               <View style={[styles.recurPill, { backgroundColor: colors.infoLight }]}>
                 <MaterialIcons name="refresh" size={10} color={colors.info} />
                 <Text style={[styles.recurText, { color: colors.info }]}>
-                  {FREQ_LABELS[task.recur_frequency]}
+                  {cadenceLabel(task.recur_frequency, task.recur_interval)}
                 </Text>
               </View>
             )}

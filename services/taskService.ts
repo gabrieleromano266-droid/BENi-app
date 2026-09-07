@@ -2,7 +2,7 @@ import { supabase } from '@/services/supabase';
 import { DBTask, TaskRow, TaskType } from '@/types';
 import { sortByDueDate, toDateString } from '@/utils/taskUtils';
 
-export const TASK_FIELDS = 'id, title, description, due_date, user_id, property_id, file_id, recur_frequency, recur_anchor, completed_at, system, severity, location, issue, fix_recommendation, cost_min, cost_max, timing_note, recurrence, catalog_id';
+export const TASK_FIELDS = 'id, title, description, due_date, user_id, property_id, file_id, recur_frequency, recur_anchor, completed_at, system, severity, location, issue, fix_recommendation, cost_min, cost_max, timing_note, recurrence, catalog_id, recur_interval';
 
 /** Fields accepted when creating or updating a task */
 export type TaskInput = Omit<TaskType, 'id'>;
@@ -16,6 +16,7 @@ function taskInputToRow(input: TaskInput) {
     file_id: input.fileId || null,
     recur_frequency: input.recurFrequency || null,
     recur_anchor: input.recurAnchor || null,
+    recur_interval: input.recurInterval ?? 1,
     system: input.system || null,
     severity: input.severity || null,
     location: input.location || null,

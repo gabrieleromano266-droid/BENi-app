@@ -67,6 +67,49 @@ export async function uploadPropertyFile(
 }
 
 /**
+ * Attach proof-of-work to a completed task: a receipt, invoice, before/after
+ * photo, or a screenshot of a contractor conversation.
+ *
+ * Stored in the same private bucket under the user's own folder, so the existing
+ * per-user storage policy already protects it. Note this costs no AI at all -
+ * it is a plain file upload. Receipts gathered here are also the ground truth
+ * we can eventually use to tighten the cost catalog's estimates.
+ */
+export async function uploadTaskDocument(
+  userId: string,
+  taskId: string,
+  propertyId: string | null,
+  fileUri: string,
+  fileName: string,
+): Promise<{ id: string; filePath: string; displayName: string }> {
+  const displayName = await resolveUniqueFileName(userId, fileName);
+  const response = await fetch(fileUri);
+  const blob = await response.blob();
+  const filePath = `${userId}/tasks/${taskId}/${Date.now()}-${displayName}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from('user_files')
+    .upload(filePath, blob);
+  if (uploadError) throw uploadError;
+
+  const { data, error: dbError } = await supabase
+    .from('files')
+    .insert({
+      user_id: userId,
+      task_id: taskId,
+      property_id: propertyId,
+      file_path: filePath,
+      file_name: displayName,
+      kind: 'completion_proof',
+    })
+    .select('id')
+    .single();
+  if (dbError) throw dbError;
+
+  return { id: data.id, filePath, displayName };
+}
+
+/**
  * Delete files from storage and their DB records.
  * @param deleteLinkedTasks - if true, also deletes all tasks linked to these files;
  *                            if false, unlinks tasks (sets file_id = null).
