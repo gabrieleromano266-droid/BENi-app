@@ -13,6 +13,7 @@ import { fontSize, radius, spacing } from '@/theme/tokens';
 import { Colors } from '@/theme/colors';
 import { TaskRow, TaskSeverity } from '@/types';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { openFileAtPage } from '@/services/fileService';
 import { useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import IconButton from '../IconButton';
@@ -56,6 +57,23 @@ function formatDoItBy(dueDate: string | null, timingNote: string | null): string
 export default function MaintenanceTaskCard({ task, showProperty, onComplete, onDelete }: Props) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
+  const [openingReport, setOpeningReport] = useState(false);
+
+  // Only offer "view in report" when we know BOTH which file it came from and
+  // which page — a link that lands on the cover page is worse than no link.
+  const canViewSource = !!task.filePath && !!task.source_page;
+
+  const viewInReport = async () => {
+    if (!task.filePath) return;
+    setOpeningReport(true);
+    try {
+      await openFileAtPage(task.filePath, task.source_page);
+    } catch (err) {
+      console.error('Could not open the report:', err);
+    } finally {
+      setOpeningReport(false);
+    }
+  };
 
   const isCritical = task.severity === 'critical';
   const icon = task.system ? SYSTEM_ICONS[task.system] : 'build';
@@ -147,8 +165,26 @@ export default function MaintenanceTaskCard({ task, showProperty, onComplete, on
             />
           )}
           {!!doItBy && <DetailRow label="Do it by" value={doItBy} colors={colors} accent />}
+          {canViewSource && (
+            <DetailRow
+              label="Found on"
+              value={`Page ${task.source_page} of ${task.fileName || 'the inspection report'}`}
+              colors={colors}
+            />
+          )}
 
           <View style={styles.actions}>
+            {canViewSource && (
+              <Button
+                title="View in report"
+                variant="outline"
+                size="sm"
+                loading={openingReport}
+                onPress={viewInReport}
+                leftIcon={<MaterialIcons name="picture-as-pdf" size={15} color={colors.primary} />}
+                style={styles.sourceBtn}
+              />
+            )}
             <Button
               title="Complete"
               variant="success"
@@ -247,6 +283,10 @@ const styles = StyleSheet.create({
   },
   completeBtn: {
     paddingHorizontal: spacing.md,
+  },
+  sourceBtn: {
+    paddingHorizontal: spacing.md,
+    marginRight: 'auto',
   },
   badge: {
     paddingHorizontal: 10,

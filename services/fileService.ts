@@ -2,7 +2,7 @@ import { supabase } from '@/services/supabase';
 import { FileRecord } from '@/types';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import { Platform } from 'react-native';
+import { Linking, Platform } from 'react-native';
 
 /** Fetch all files for a property */
 export async function fetchFilesForProperty(propertyId: string): Promise<FileRecord[]> {
@@ -126,6 +126,36 @@ export async function deleteFiles(files: FileRecord[], deleteLinkedTasks = true)
     await supabase.from('tasks').update({ file_id: null }).in('file_id', ids);
   }
   await supabase.from('files').delete().in('id', ids);
+}
+
+/**
+ * Open a stored report for READING, jumped to a specific page.
+ *
+ * Deliberately different from downloadFile(): that one saves a copy, this one
+ * views it. We hand out a short-lived signed URL rather than downloading the
+ * bytes, because the "#page=N" fragment is understood by the browser's built-in
+ * PDF viewer — that is what makes "view in report" land on the right page
+ * instead of the cover.
+ *
+ * The bucket is private, so the signed URL is the only way a viewer can read
+ * it, and it expires in ten minutes.
+ */
+export async function openFileAtPage(
+  filePath: string,
+  page?: number | null,
+): Promise<void> {
+  const { data, error } = await supabase.storage
+    .from('user_files')
+    .createSignedUrl(filePath, 600);
+  if (error || !data?.signedUrl) throw error || new Error('Could not open this report');
+
+  const url = page && page > 0 ? `${data.signedUrl}#page=${page}` : data.signedUrl;
+
+  if (Platform.OS === 'web') {
+    window.open(url, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  await Linking.openURL(url);
 }
 
 /** Download a file — opens a save dialog on web, share sheet on native */

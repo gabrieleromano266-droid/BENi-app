@@ -2,7 +2,7 @@ import { supabase } from '@/services/supabase';
 import { DBTask, TaskRow, TaskType } from '@/types';
 import { sortByDueDate, toDateString } from '@/utils/taskUtils';
 
-export const TASK_FIELDS = 'id, title, description, due_date, user_id, property_id, file_id, recur_frequency, recur_anchor, completed_at, system, severity, location, issue, fix_recommendation, cost_min, cost_max, timing_note, recurrence, catalog_id, recur_interval';
+export const TASK_FIELDS = 'id, title, description, due_date, user_id, property_id, file_id, recur_frequency, recur_anchor, completed_at, system, severity, location, issue, fix_recommendation, cost_min, cost_max, timing_note, recurrence, catalog_id, recur_interval, source_page';
 
 /** Fields accepted when creating or updating a task */
 export type TaskInput = Omit<TaskType, 'id'>;
@@ -27,6 +27,7 @@ function taskInputToRow(input: TaskInput) {
     timing_note: input.timingNote || null,
     recurrence: input.recurrence || null,
     catalog_id: input.catalogId || null,
+    source_page: input.sourcePage ?? null,
   };
 }
 
@@ -51,18 +52,22 @@ export async function fetchAllTasksForUser(userId: string): Promise<TaskRow[]> {
 
   const fileIds = [...new Set(taskData.map((t) => t.file_id).filter(Boolean))] as string[];
   let fileNameMap: Record<string, string> = {};
+  // The storage path comes along too, so a task can open its own report.
+  let filePathMap: Record<string, string> = {};
   if (fileIds.length > 0) {
     const { data: fileData } = await supabase
       .from('files')
-      .select('id, file_name')
+      .select('id, file_name, file_path')
       .in('id', fileIds);
     fileNameMap = Object.fromEntries((fileData || []).map((f) => [f.id, f.file_name as string]));
+    filePathMap = Object.fromEntries((fileData || []).map((f) => [f.id, f.file_path as string]));
   }
 
   const tasks: TaskRow[] = taskData.map((t) => ({
     ...t,
     propertyName: t.property_id ? (propMap[t.property_id] || '') : '',
     fileName: t.file_id ? (fileNameMap[t.file_id] || '') : '',
+    filePath: t.file_id ? (filePathMap[t.file_id] || '') : '',
   }));
 
   return sortByDueDate(tasks);

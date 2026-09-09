@@ -48,6 +48,8 @@ type ExtractedTask = {
   timingNote: string | null;
   recurrence: string | null;
   catalogId: string | null;
+  /** 1-based page of the source PDF. Computed from offsets, never guessed by the model. */
+  sourcePage: number | null;
 };
 
 // Section headings used by the target inspection format. Findings live under
@@ -203,36 +205,97 @@ function repairSpacedText(text: string): string {
  * If we can't confidently find a header we keep the whole document — better to
  * pay for a few extra tokens than to silently drop findings.
  */
-function trimToFindings(text: string): string {
+function findingsOffset(text: string): number {
   const pattern = new RegExp(`^\\s*(${SECTION_HEADERS.join('|')})\\s*$`, 'm');
   const lines = text.split('\n');
 
+  let offset = 0;
   for (let i = 0; i < lines.length; i++) {
     if (pattern.test(lines[i])) {
       // Require a couple more headers after this point so we don't cut at the
       // table of contents.
       const rest = lines.slice(i).join('\n');
       const headerCount = (rest.match(new RegExp(`^\\s*(${SECTION_HEADERS.join('|')})\\s*$`, 'gm')) || []).length;
-      if (headerCount >= 3) return rest;
+      if (headerCount >= 3) return offset;
     }
+    offset += lines[i].length + 1; // +1 for the newline split() removed
   }
-  return text;
+  return 0;
 }
 
 const MAX_CHARS = 120_000; // generous ceiling after repair; ~30k tokens
 
-function preparePdfText(raw: string): { text: string; rawChars: number; finalChars: number } {
-  const repaired = repairSpacedText(raw);
-  const trimmed = trimToFindings(repaired);
+/**
+ * The report, prepared for the model, WITH its page boundaries preserved.
+ *
+ * `pageStarts[i]` is the character offset in `text` at which PDF page (i+1)
+ * begins. Offsets can be negative for pages that fell inside the trimmed front
+ * matter — that is fine, it just means those pages are before the text we kept.
+ */
+type PreparedReport = {
+  text: string;
+  pageStarts: number[];
+  /** Repaired text of each page, used to pin a finding to one page. */
+  pages: string[];
+  rawChars: number;
+  finalChars: number;
+};
+
+const PAGE_JOIN = '\n\n';
+
+/**
+ * Build the prompt text AND the page index in one pass.
+ *
+ * The previous version asked the PDF library to merge every page into one
+ * string, which threw away the page numbers before anything else ran. We now
+ * repair each page on its own (the repair is line-based, so per-page gives the
+ * same result) and glue the pages together ourselves, writing down where each
+ * one started. That makes "which page did this finding come from?" a lookup
+ * rather than a question for the model.
+ */
+function preparePdfText(rawPages: string[]): PreparedReport {
+  const rawChars = rawPages.reduce((n, page) => n + page.length, 0);
+  const pages = rawPages.map(repairSpacedText);
+
+  const pageStarts: number[] = [];
+  let offset = 0;
+  pages.forEach((page, i) => {
+    pageStarts.push(offset);
+    offset += page.length + (i < pages.length - 1 ? PAGE_JOIN.length : 0);
+  });
+  const joined = pages.join(PAGE_JOIN);
+
+  // Front matter (thank-you notes, disclaimers, legends) is cut off the front,
+  // so every page start shifts left by however much we removed.
+  const cut = findingsOffset(joined);
+  const trimmed = joined.slice(cut);
   const capped = trimmed.length > MAX_CHARS ? trimmed.slice(0, MAX_CHARS) : trimmed;
-  return { text: capped, rawChars: raw.length, finalChars: capped.length };
+
+  return {
+    text: capped,
+    pageStarts: pageStarts.map((start) => start - cut),
+    pages,
+    rawChars,
+    finalChars: capped.length,
+  };
 }
 
-async function extractPdfText(pdfBytes: Uint8Array): Promise<string> {
+/** Which PDF page does this character offset fall on? (1-based) */
+function pageForOffset(offset: number, pageStarts: number[]): number {
+  let page = 1;
+  for (let i = 0; i < pageStarts.length; i++) {
+    if (pageStarts[i] <= offset) page = i + 1;
+    else break;
+  }
+  return page;
+}
+
+async function extractPdfPages(pdfBytes: Uint8Array): Promise<string[]> {
   const { extractText, getDocumentProxy } = await import('npm:unpdf@0.11.0');
   const pdf = await getDocumentProxy(pdfBytes);
-  const { text } = await extractText(pdf, { mergePages: true });
-  return text;
+  // mergePages:false is the whole point — it keeps the pages as an array.
+  const { text } = await extractText(pdf, { mergePages: false });
+  return Array.isArray(text) ? text : [String(text)];
 }
 
 // ---------------------------------------------------------------------------
@@ -331,50 +394,116 @@ async function chatJSON(system: string, user: string, label: string): Promise<Re
  */
 const MAX_CHUNK_CHARS = 7000;
 
-function splitIntoChunks(text: string): string[] {
+/** A slice of the report plus where in the report it began. */
+type Chunk = { text: string; start: number };
+
+function splitIntoChunks(text: string): Chunk[] {
   const lines = text.split('\n');
   const headerRe = new RegExp(`^(${SECTION_HEADERS.join('|')})$`, 'i');
+
+  // Character offset of every line, so each chunk can report where it started.
+  const lineStarts: number[] = [];
+  let acc = 0;
+  for (const line of lines) {
+    lineStarts.push(acc);
+    acc += line.length + 1; // +1 for the newline split() removed
+  }
 
   const boundaries: number[] = [];
   lines.forEach((line, i) => {
     if (headerRe.test(line.trim())) boundaries.push(i);
   });
 
-  let sections: string[] = [];
+  let sections: Chunk[] = [];
   if (boundaries.length >= 3) {
     boundaries.forEach((b, i) => {
       const next = i + 1 < boundaries.length ? boundaries[i + 1] : lines.length;
-      const body = lines.slice(b, next).join('\n').trim();
-      if (body.length > 0) sections.push(body);
+      const body = lines.slice(b, next).join('\n');
+      if (body.trim().length > 0) sections.push({ text: body.trim(), start: lineStarts[b] });
     });
-    const head = lines.slice(0, boundaries[0]).join('\n').trim();
-    if (head.length > 400) sections.unshift(head);
+    const head = lines.slice(0, boundaries[0]).join('\n');
+    if (head.trim().length > 400) sections.unshift({ text: head.trim(), start: 0 });
   } else {
-    sections = [text];
+    sections = [{ text, start: 0 }];
   }
 
   // Hard-split anything still too long so no single call gets a wall of text.
-  const chunks: string[] = [];
+  const chunks: Chunk[] = [];
   for (const sec of sections) {
-    if (sec.length <= MAX_CHUNK_CHARS) { chunks.push(sec); continue; }
-    for (let i = 0; i < sec.length; i += MAX_CHUNK_CHARS) {
-      chunks.push(sec.slice(i, i + MAX_CHUNK_CHARS));
+    if (sec.text.length <= MAX_CHUNK_CHARS) { chunks.push(sec); continue; }
+    for (let i = 0; i < sec.text.length; i += MAX_CHUNK_CHARS) {
+      chunks.push({ text: sec.text.slice(i, i + MAX_CHUNK_CHARS), start: sec.start + i });
     }
   }
-  return chunks.filter((c) => c.trim().length > 50);
+  return chunks.filter((c) => c.text.trim().length > 50);
+}
+
+// Words too common in an inspection report to identify a page.
+const PAGE_STOPWORDS = new Set([
+  'recommend', 'recommended', 'should', 'this', 'that', 'with', 'from', 'have',
+  'been', 'were', 'will', 'your', 'they', 'there', 'these', 'those', 'some',
+  'area', 'areas', 'unit', 'units', 'system', 'systems', 'note', 'noted',
+  'general', 'condition', 'observed', 'appears', 'further', 'required',
+]);
+
+function pageKeywords(...parts: (string | null)[]): string[] {
+  const words = parts
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(' ')
+    .filter((w) => w.length > 3 && !PAGE_STOPWORDS.has(w));
+  return [...new Set(words)];
+}
+
+/**
+ * Narrow a finding from "somewhere in this chunk" down to a single page.
+ *
+ * A chunk is one report section and can span three or four pages. This scores
+ * each of those pages by how many of the finding's own distinctive words appear
+ * on it — a plain text search, no model involved. If nothing scores convincingly
+ * we keep the chunk's first page, which is the section heading and still lands
+ * the reader in the right place.
+ */
+function refinePage(task: ExtractedTask, pages: string[], first: number, last: number): number {
+  const words = pageKeywords(task.title, task.location);
+  if (words.length === 0) return first;
+
+  let bestPage = first;
+  let bestScore = 0;
+  for (let p = first; p <= last && p <= pages.length; p++) {
+    const haystack = (pages[p - 1] ?? '').toLowerCase();
+    let score = 0;
+    for (const w of words) if (haystack.includes(w)) score++;
+    if (score > bestScore) { bestScore = score; bestPage = p; }
+  }
+
+  // Require half the words to land before trusting the refinement over the
+  // section's own first page.
+  return bestScore * 2 >= words.length ? bestPage : first;
 }
 
 /** STAGE 1: extract findings from every chunk in parallel, then de-duplicate. */
-async function extractFindings(reportText: string, description: string): Promise<ExtractedTask[]> {
-  const chunks = splitIntoChunks(reportText);
+async function extractFindings(report: PreparedReport, description: string): Promise<ExtractedTask[]> {
+  const chunks = splitIntoChunks(report.text);
   console.log(`Split report into ${chunks.length} chunk(s) for extraction.`);
 
   const perChunk = await Promise.all(
     chunks.map(async (chunk, i) => {
-      const user = (description && i === 0 ? `Notes from the homeowner: ${description}\n\n` : '') + `Report section ${i + 1} of ${chunks.length}:\n\n${chunk}`;
+      const user = (description && i === 0 ? `Notes from the homeowner: ${description}\n\n` : '') + `Report section ${i + 1} of ${chunks.length}:\n\n${chunk.text}`;
       try {
         const res = await chatJSON(buildExtractPrompt(), user, `extract ${i + 1}/${chunks.length}`);
-        return Array.isArray(res?.tasks) ? (res.tasks as ExtractedTask[]) : [];
+        const found = Array.isArray(res?.tasks) ? (res.tasks as ExtractedTask[]) : [];
+
+        // Stamp each finding with the page it came from. The chunk knows where
+        // it started, so this is arithmetic on our side, not a model guess.
+        const firstPage = pageForOffset(chunk.start, report.pageStarts);
+        const lastPage = pageForOffset(chunk.start + chunk.text.length, report.pageStarts);
+        for (const t of found) {
+          if (t) t.sourcePage = refinePage(t, report.pages, firstPage, lastPage);
+        }
+        return found;
       } catch (err) {
         console.error(`Chunk ${i + 1} extraction failed: ${(err as Error).message}`);
         return [];
@@ -546,6 +675,7 @@ function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogR
       timingNote: str(t.timingNote),
       recurrence: str(t.recurrence),
       catalogId: match ? match.id : null,   // drop hallucinated ids
+      sourcePage: Number.isInteger(t.sourcePage) && (t.sourcePage as number) > 0 ? t.sourcePage : null,
       };
 
       // Never leave a task uncategorised - it would vanish from the score.
@@ -635,11 +765,12 @@ Deno.serve(async (req: Request) => {
       .join('\n');
 
     const pdfBytes = new Uint8Array(await fileBlob.arrayBuffer());
-    const rawText = await extractPdfText(pdfBytes);
-    const { text, rawChars, finalChars } = preparePdfText(rawText);
+    const rawPages = await extractPdfPages(pdfBytes);
+    const report = preparePdfText(rawPages);
+    const { rawChars, finalChars } = report;
 
     console.log(
-      `PDF prepared — raw=${rawChars} chars, sent=${finalChars} chars ` +
+      `PDF prepared — ${rawPages.length} page(s), raw=${rawChars} chars, sent=${finalChars} chars ` +
       `(${rawChars ? Math.round((1 - finalChars / rawChars) * 100) : 0}% reduction)`,
     );
 
@@ -650,14 +781,15 @@ Deno.serve(async (req: Request) => {
     }
 
     // Stage 1: find everything. Stage 2: label it against the catalog.
-    const findings = await extractFindings(text, description);
+    const findings = await extractFindings(report, description);
     await matchFindings(findings, catalogText);
     const deduped = mergeSameCatalogEntry(findings);
     const tasks = sanitizeAndEnrich(deduped, catalog);
     const matched = tasks.filter((t) => t.catalogId).length;
+    const paged = tasks.filter((t) => t.sourcePage).length;
     console.log(
       `Extracted ${tasks.length} tasks; ${matched} matched to catalog, ` +
-      `${tasks.length - matched} unmatched. catalog_size=${catalog.size}`,
+      `${tasks.length - matched} unmatched, ${paged} with a source page. catalog_size=${catalog.size}`,
     );
 
     return new Response(JSON.stringify({ tasks }), {

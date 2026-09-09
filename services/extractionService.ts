@@ -22,6 +22,8 @@ export type ExtractedTask = {
   recurrence: string | null;
   /** matched cost_catalog id, or null when the finding is not in the catalog */
   catalogId: string | null;
+  /** 1-based page of the report this finding was found on, or null */
+  sourcePage: number | null;
 };
 
 /**

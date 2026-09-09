@@ -38,6 +38,8 @@ export type TaskType = {
   recurrence?: string | null;
   /** id of the matched public.cost_catalog row, null when unmatched */
   catalogId?: string | null;
+  /** 1-based page of the inspection PDF this finding came from */
+  sourcePage?: number | null;
 };
 
 /** Raw DB row from the tasks table */
@@ -63,12 +65,15 @@ export type DBTask = {
   timing_note: string | null;
   recurrence: string | null;
   catalog_id?: string | null;
+  source_page?: number | null;
 };
 
 /** DBTask enriched with the property name (used on dashboard) */
 export type TaskRow = DBTask & {
   propertyName: string;
   fileName: string;
+  /** Storage path of the source report, so a task can open it at its page */
+  filePath?: string;
 };
 
 export type StandardFeature = {
