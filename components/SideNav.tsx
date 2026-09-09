@@ -23,11 +23,13 @@ const TOPBAR_HEIGHT = 56;
 
 type IconName = ComponentProps<typeof MaterialIcons>['name'];
 
-// "My Properties" was removed from the nav: property switching now lives solely
-// in the dashboard header dropdown. The /(tabs)/properties route still exists but
-// is no longer linked here.
+// "My Properties" was once dropped from here on the theory that the dashboard's
+// property dropdown was enough. It wasn't: renaming and deleting a property live
+// ONLY on that screen, so removing the link orphaned the only way to remove a
+// property (and its reports) from the account. Keep this entry.
 const NAV_ITEMS: { label: string; icon: IconName; path: string }[] = [
   { label: 'Dashboard', icon: 'space-dashboard', path: '/(tabs)/dashboard' },
+  { label: 'My Properties', icon: 'home-work', path: '/(tabs)/properties' },
   { label: 'Maintenance', icon: 'assignment', path: '/(tabs)/maintenance' },
   { label: 'Documents', icon: 'description', path: '/(tabs)/documents' },
 ];
