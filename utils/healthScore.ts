@@ -25,9 +25,22 @@ export function computeHealthScores(tasks: TaskRow[]): {
     return { system: value, label, score: Math.max(0, 100 - deduction) };
   });
 
-  const overall = bySystem.length
-    ? Math.round(bySystem.reduce((sum, s) => sum + s.score, 0) / bySystem.length)
+  // Tasks the extractor could not categorise used to vanish from this maths
+  // entirely - in production that hid FIVE critical garage-door safety findings.
+  // They now still cost the homeowner points, spread across the home, so a
+  // categorisation miss can never quietly inflate the score.
+  const unassignedDeduction = openTasks
+    .filter((t) => (!t.system || !SYSTEM_LABELS[t.system]) && t.severity)
+    .reduce((sum, t) => sum + SEVERITY_WEIGHTS[t.severity!], 0);
+
+  const systemAverage = bySystem.length
+    ? bySystem.reduce((sum, s) => sum + s.score, 0) / bySystem.length
     : 100;
+
+  const overall = Math.max(
+    0,
+    Math.round(systemAverage - unassignedDeduction / (bySystem.length || 1)),
+  );
 
   const unassignedCount = openTasks.filter((t) => !t.system || !SYSTEM_LABELS[t.system]).length;
 

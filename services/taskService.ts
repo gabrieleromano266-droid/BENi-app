@@ -78,6 +78,40 @@ export async function fetchTasksForProperty(propertyId: string): Promise<DBTask[
   return sortByDueDate(data || []);
 }
 
+/** A task that should be nagging the homeowner right now. */
+export type AttentionTask = DBTask & { reason: 'overdue' | 'due_soon' | 'critical' };
+
+/**
+ * What the notification bell shows: anything overdue, due within the next 30
+ * days, or critical. Ordered by urgency so the top of the list is what actually
+ * matters today.
+ */
+export async function fetchAttentionTasks(userId: string): Promise<AttentionTask[]> {
+  const today = new Date();
+  const horizon = new Date();
+  horizon.setDate(horizon.getDate() + 30);
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+
+  const { data } = await supabase
+    .from('tasks')
+    .select(TASK_FIELDS)
+    .eq('user_id', userId)
+    .is('completed_at', null)
+    .or(`due_date.lte.${iso(horizon)},severity.eq.critical`)
+    .order('due_date', { ascending: true, nullsFirst: false })
+    .limit(50);
+
+  const todayStr = iso(today);
+  return (data || []).map((t) => ({
+    ...t,
+    reason: (t.due_date && t.due_date < todayStr)
+      ? 'overdue'
+      : (t.due_date && t.due_date <= iso(horizon))
+        ? 'due_soon'
+        : 'critical',
+  })) as AttentionTask[];
+}
+
 /** Fetch COMPLETED tasks (most recently completed first) for the "Completed" view. */
 export async function fetchCompletedTasksForUser(userId: string): Promise<DBTask[]> {
   const { data } = await supabase

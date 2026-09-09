@@ -444,8 +444,31 @@ function mergeSameCatalogEntry(tasks: ExtractedTask[]): ExtractedTask[] {
   const detail = (t: ExtractedTask) =>
     (t.issue?.length ?? 0) + (t.fixRecommendation?.length ?? 0) + (t.location?.length ?? 0);
 
+  // Unmatched findings need a text-based key: production produced "Install
+  // safety sensors FOR left garage door" and "...ON left garage door" as two
+  // separate tasks. Dropping filler words and sorting the rest makes those
+  // collapse to the same key.
+  const STOP = new Set(['a','an','and','at','for','from','in','of','on','or','the','to','with']);
+  const titleKey = (t: ExtractedTask) =>
+    (t.title || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w && !STOP.has(w))
+      .sort()
+      .join(' ');
+
   for (const t of tasks) {
-    if (!t?.catalogId) { out.push(t); continue; }      // unmatched stay distinct
+    if (!t?.catalogId) {
+      const key = `txt|${titleKey(t)}|${t.system ?? ''}`;
+      const existing = byKey.get(key);
+      if (!existing) { byKey.set(key, t); out.push(t); }
+      else {
+        merged++;
+        if (detail(t) > detail(existing)) Object.assign(existing, t);
+      }
+      continue;
+    }
     const key = `${t.catalogId}|${t.system ?? ''}`;
     const existing = byKey.get(key);
     if (!existing) { byKey.set(key, t); out.push(t); continue; }
@@ -456,6 +479,52 @@ function mergeSameCatalogEntry(tasks: ExtractedTask[]): ExtractedTask[] {
   }
   if (merged > 0) console.log(`Merged ${merged} duplicate finding(s) sharing a catalog entry.`);
   return out;
+}
+
+/**
+ * Deterministic fallback for the two things the model most often leaves blank.
+ *
+ * Every uncategorised task found in production was a GARAGE item: the reports
+ * have a GARAGE section, our taxonomy has six systems and no "garage", and the
+ * model would rather return null than guess. A task with no system is invisible
+ * to the Home Health Score, so five CRITICAL garage-door safety findings were
+ * silently uncounted. Keywords are boring and they never return null.
+ */
+const SYSTEM_KEYWORDS: [RegExp, (typeof HOME_SYSTEMS)[number]][] = [
+  [/\b(outlet|receptacle|breaker|wiring|electr|gfci|knockout|subpanel|light fixture|(electrical|service|breaker)\s+panel)/i, 'electrical'],
+  [/\b(pipe|drain|plumb|faucet|toilet|water heater|sewer|supply line|p-trap|hose bib)/i, 'plumbing'],
+  [/\b(furnace|hvac|duct|vent(ing)?|thermostat|air condition|heat pump|hrv|erv|chimney|fireplace|filter)/i, 'hvac'],
+  [/\b(roof|shingle|flashing|attic|soffit|eavestrough|gutter|downspout)/i, 'roof_attic'],
+  [/\b(garage|grading|siding|cladding|deck|fence|exterior|foundation|window well|driveway|walkway|landscap|drainage)/i, 'exterior'],
+  [/\b(drywall|floor|ceiling|kitchen|bathroom|counter|cabinet|stair|interior|paint|window|door)/i, 'interior'],
+];
+
+function inferSystem(t: ExtractedTask): (typeof HOME_SYSTEMS)[number] | null {
+  const hay = `${t.title} ${t.issue ?? ''} ${t.location ?? ''}`;
+  for (const [re, sys] of SYSTEM_KEYWORDS) if (re.test(hay)) return sys;
+  return null;
+}
+
+/**
+ * A maintenance plan without dates is just a list. Reports almost never state a
+ * deadline, so the model returns null for nearly every dueDate - in production
+ * only 1 of 171 tasks had one. The catalog's urgency window is the real signal;
+ * severity is the fallback when nothing matched.
+ */
+function deriveDueDate(t: ExtractedTask, urgency: string | null | undefined): string | null {
+  if (t.dueDate) return t.dueDate;                   // the report actually said one
+  const u = (urgency ?? '').toLowerCase();
+  let days: number;
+  if (u.includes('immediate')) days = 7;
+  else if (u.includes('30-90')) days = 60;
+  else if (u.startsWith('before')) days = 90;
+  else if (u.includes('1-2 year')) days = 540;
+  else if (u.includes('annual') || u.includes('monitor')) days = 365;
+  else days = t.severity === 'critical' ? 30 : t.severity === 'minor' ? 365 : 180;
+
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
 function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogRow>): ExtractedTask[] {
@@ -479,7 +548,13 @@ function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogR
       catalogId: match ? match.id : null,   // drop hallucinated ids
       };
 
-      if (!match) return base;
+      // Never leave a task uncategorised - it would vanish from the score.
+      if (!base.system) base.system = inferSystem(t);
+
+      if (!match) {
+        base.dueDate = deriveDueDate(base, null);
+        return base;
+      }
 
       // Magnitude sanity check. The model estimated a cost itself in stage 1;
       // if the catalog entry it picked is an order of magnitude more expensive,
@@ -509,6 +584,7 @@ function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogR
         // The catalog's homeowner-language wording beats a paraphrase of jargon.
         issue: match.meaning ?? base.issue,
         timingNote: base.timingNote ?? (match.urgency ? `Typical timeframe: ${match.urgency}` : null),
+        dueDate: deriveDueDate(base, match.urgency),
       };
     });
 }

@@ -9,6 +9,7 @@ import { ReactNode } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/theme/ThemeContext';
 import { fonts, fontSize, spacing } from '@/theme/tokens';
+import NotificationBell from '@/components/NotificationBell';
 
 type Props = {
   title: string;
@@ -19,9 +20,11 @@ type Props = {
   left?: ReactNode;
   /** Rendered after the title block (e.g. primary action, selection actions) */
   right?: ReactNode;
+  /** Set false where the bell would be noise (e.g. auth screens). */
+  showBell?: boolean;
 };
 
-export default function PageHeader({ title, subtitle, subtitleColor, left, right }: Props) {
+export default function PageHeader({ title, subtitle, subtitleColor, left, right, showBell = true }: Props) {
   const { colors } = useTheme();
   return (
     <View style={styles.row}>
@@ -34,6 +37,7 @@ export default function PageHeader({ title, subtitle, subtitleColor, left, right
           <Text style={[styles.subtitle, { color: subtitleColor ?? colors.textMuted }]}>{subtitle}</Text>
         )}
       </View>
+      {showBell && <NotificationBell />}
       {right}
     </View>
   );
