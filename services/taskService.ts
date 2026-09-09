@@ -78,38 +78,56 @@ export async function fetchTasksForProperty(propertyId: string): Promise<DBTask[
   return sortByDueDate(data || []);
 }
 
-/** A task that should be nagging the homeowner right now. */
-export type AttentionTask = DBTask & { reason: 'overdue' | 'due_soon' | 'critical' };
+/** Which nudge window a task currently falls in. */
+export type AttentionTier = 'overdue' | 'week' | 'two_weeks' | 'month';
+
+export type AttentionTask = DBTask & { tier: AttentionTier };
+
+export const TIER_LABELS: Record<AttentionTier, string> = {
+  overdue:   'Overdue',
+  week:      'This week',
+  two_weeks: 'Next two weeks',
+  month:     'This month',
+};
 
 /**
- * What the notification bell shows: anything overdue, due within the next 30
- * days, or critical. Ordered by urgency so the top of the list is what actually
- * matters today.
+ * Tasks worth nudging about, in tiers rather than all at once.
+ *
+ * Showing every upcoming task defeats the purpose - with 171 open tasks the bell
+ * would just be a wall. Instead a task surfaces as it approaches: roughly a month
+ * out, then two weeks, then the final week, then overdue. Anything further away
+ * stays out of the way until it earns attention.
+ *
+ * Note there is no separate "critical regardless of date" rule any more: critical
+ * findings are given short due dates (7-30 days) at extraction, so they arrive
+ * here on their own merit instead of permanently inflating the count.
  */
 export async function fetchAttentionTasks(userId: string): Promise<AttentionTask[]> {
-  const today = new Date();
   const horizon = new Date();
   horizon.setDate(horizon.getDate() + 30);
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const horizonStr = horizon.toISOString().slice(0, 10);
 
   const { data } = await supabase
     .from('tasks')
     .select(TASK_FIELDS)
     .eq('user_id', userId)
     .is('completed_at', null)
-    .or(`due_date.lte.${iso(horizon)},severity.eq.critical`)
-    .order('due_date', { ascending: true, nullsFirst: false })
-    .limit(50);
+    .not('due_date', 'is', null)
+    .lte('due_date', horizonStr)
+    .order('due_date', { ascending: true })
+    .limit(60);
 
-  const todayStr = iso(today);
-  return (data || []).map((t) => ({
-    ...t,
-    reason: (t.due_date && t.due_date < todayStr)
-      ? 'overdue'
-      : (t.due_date && t.due_date <= iso(horizon))
-        ? 'due_soon'
-        : 'critical',
-  })) as AttentionTask[];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  return (data || []).map((task) => {
+    const days = Math.round(
+      (new Date(task.due_date + 'T00:00:00').getTime() - today.getTime()) / 86400000,
+    );
+    const tier: AttentionTier =
+      days < 0 ? 'overdue' : days <= 7 ? 'week' : days <= 14 ? 'two_weeks' : 'month';
+    return { ...task, tier };
+  }) as AttentionTask[];
 }
 
 /** Fetch COMPLETED tasks (most recently completed first) for the "Completed" view. */

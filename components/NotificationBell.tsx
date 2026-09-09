@@ -15,7 +15,7 @@ import { useRouter } from 'expo-router';
 import { useTheme } from '@/theme/ThemeContext';
 import { fonts, fontSize, radius, spacing } from '@/theme/tokens';
 import { supabase } from '@/services/supabase';
-import { AttentionTask, fetchAttentionTasks } from '@/services/taskService';
+import { AttentionTask, AttentionTier, fetchAttentionTasks, TIER_LABELS } from '@/services/taskService';
 import { SYSTEM_LABELS } from '@/constants/systems';
 
 function daysUntil(due: string | null): number | null {
@@ -52,8 +52,11 @@ export default function NotificationBell() {
     return () => { alive = false; };
   }, []);
 
-  const overdue = items.filter((i) => i.reason === 'overdue').length;
-  const count = items.length;
+  const overdue = items.filter((i) => i.tier === 'overdue').length;
+  // The badge counts only what is actionable NOW (overdue + this week). Counting
+  // everything inside 30 days is what made this feel like noise.
+  const count = items.filter((i) => i.tier === 'overdue' || i.tier === 'week').length;
+  const laterCount = items.length - count;
 
   // Overdue is the only thing that earns an alarming red badge; everything else
   // is informational and stays calm.
@@ -97,9 +100,17 @@ export default function NotificationBell() {
               </Text>
             ) : (
               <ScrollView style={styles.list}>
-                {items.slice(0, 20).map((task) => {
-                  const isOverdue = task.reason === 'overdue';
-                  const isCritical = task.reason === 'critical';
+                {(['overdue', 'week', 'two_weeks', 'month'] as AttentionTier[]).map((tier) => {
+                  const group = items.filter((i) => i.tier === tier);
+                  if (group.length === 0) return null;
+                  return (
+                    <View key={tier}>
+                      <Text style={[styles.groupLabel, { color: colors.textMuted }]}>
+                        {TIER_LABELS[tier]}  ·  {group.length}
+                      </Text>
+                      {group.slice(0, 8).map((task) => {
+                  const isOverdue = task.tier === 'overdue';
+                  const isCritical = task.severity === 'critical';
                   const iconName = isOverdue
                     ? 'error-outline'
                     : isCritical
@@ -132,9 +143,18 @@ export default function NotificationBell() {
                         </Text>
                       </View>
                     </Pressable>
+                      );
+                      })}
+                    </View>
                   );
                 })}
               </ScrollView>
+            )}
+
+            {laterCount > 0 && (
+              <Text style={[styles.footer, { color: colors.textMuted }]}>
+                {laterCount} more coming up in the next month
+              </Text>
             )}
           </Pressable>
         </Pressable>
@@ -198,6 +218,18 @@ const styles = StyleSheet.create({
   },
   list: {
     marginTop: spacing.xs,
+  },
+  groupLabel: {
+    fontSize: fontSize.xs,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginTop: spacing.sm,
+    marginBottom: 2,
+  },
+  footer: {
+    fontSize: fontSize.sm,
+    marginTop: spacing.sm,
   },
   row: {
     flexDirection: 'row',
