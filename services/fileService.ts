@@ -8,7 +8,7 @@ import { Linking, Platform } from 'react-native';
 export async function fetchFilesForProperty(propertyId: string): Promise<FileRecord[]> {
   const { data } = await supabase
     .from('files')
-    .select('id, file_name, file_path, property_id')
+    .select('id, file_name, file_path, property_id, folder_id')
     .eq('property_id', propertyId);
   return data || [];
 }

@@ -4,11 +4,12 @@
  * - Web / wide screens (>= BREAKPOINT): always-visible left sidebar.
  * - Phone: slim top bar with a hamburger that slides the same panel over the content.
  *
- * Items: Dashboard, My Properties, Maintenance, Documents, Upload Report
+ * Items: Dashboard, My Properties, Documents, Upload Report
  * (Upload Report opens the existing UploadExtractPopup rather than a page).
  * Bottom: user card (→ Profile), Sign Out, theme toggle.
  */
 import IconButton from '@/components/IconButton';
+import NavIcon, { NavIconName, NavIconPressable } from '@/components/NavIcon';
 import UploadExtractPopup from '@/components/upload/UploadExtractPopup';
 import { supabase } from '@/services/supabase';
 import { useTheme } from '@/theme/ThemeContext';
@@ -27,11 +28,15 @@ type IconName = ComponentProps<typeof MaterialIcons>['name'];
 // property dropdown was enough. It wasn't: renaming and deleting a property live
 // ONLY on that screen, so removing the link orphaned the only way to remove a
 // property (and its reports) from the account. Keep this entry.
-const NAV_ITEMS: { label: string; icon: IconName; path: string }[] = [
-  { label: 'Dashboard', icon: 'space-dashboard', path: '/(tabs)/dashboard' },
-  { label: 'My Properties', icon: 'home-work', path: '/(tabs)/properties' },
-  { label: 'Maintenance', icon: 'assignment', path: '/(tabs)/maintenance' },
-  { label: 'Documents', icon: 'description', path: '/(tabs)/documents' },
+//
+// "Maintenance" was removed deliberately: the dashboard already lists every
+// task, with filtering the Maintenance screen didn't have. The route at
+// /(tabs)/maintenance still exists and still works if you navigate to it
+// directly — it is just no longer a top-level destination.
+const NAV_ITEMS: { label: string; icon: NavIconName; path: string }[] = [
+  { label: 'Dashboard', icon: 'dashboard', path: '/(tabs)/dashboard' },
+  { label: 'My Properties', icon: 'properties', path: '/(tabs)/properties' },
+  { label: 'Documents', icon: 'documents', path: '/(tabs)/documents' },
 ];
 
 export default function SideNav() {
@@ -42,6 +47,10 @@ export default function SideNav() {
   const { colors, isDark, toggleTheme } = useTheme();
 
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Bumping a counter replays that icon's animation; keyed by path so each
+  // nav row animates independently.
+  const [replays, setReplays] = useState<Record<string, number>>({});
+  const replay = (key: string) => setReplays((r) => ({ ...r, [key]: (r[key] ?? 0) + 1 }));
   const [uploadVisible, setUploadVisible] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [email, setEmail] = useState('');
@@ -110,6 +119,8 @@ export default function SideNav() {
             icon={item.icon}
             label={item.label}
             active={isActive(item.path)}
+            trigger={replays[item.path] ?? 0}
+            onReplay={() => replay(item.path)}
             onPress={() => navigate(item.path)}
           />
         ))}
@@ -117,6 +128,8 @@ export default function SideNav() {
           icon="upload"
           label="Upload Report"
           active={false}
+          trigger={replays.upload ?? 0}
+          onReplay={() => replay('upload')}
           onPress={() => { setUploadVisible(true); setDrawerOpen(false); }}
         />
       </View>
@@ -185,7 +198,7 @@ export default function SideNav() {
         visible={uploadVisible}
         userId={userId ?? ''}
         onClose={() => setUploadVisible(false)}
-        onSuccess={() => router.push('/(tabs)/maintenance' as any)}
+        onSuccess={() => router.push('/(tabs)/dashboard' as any)}
       />
     </>
   );
@@ -194,22 +207,32 @@ export default function SideNav() {
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function NavItem({
-  icon, label, active, onPress,
-}: { icon: IconName; label: string; active: boolean; onPress: () => void }) {
+  icon, label, active, onPress, trigger, onReplay,
+}: {
+  icon: NavIconName; label: string; active: boolean; onPress: () => void;
+  trigger: number; onReplay: () => void;
+}) {
   const { colors } = useTheme();
   return (
-    <TouchableOpacity
+    <NavIconPressable
       onPress={onPress}
+      onReplay={onReplay}
       style={[styles.navItem, { backgroundColor: active ? colors.headerActiveBg : 'transparent' }]}
     >
-      <MaterialIcons name={icon} size={18} color={active ? colors.headerAccent : colors.headerTextMuted} />
+      <NavIcon
+        name={icon}
+        size={18}
+        trigger={trigger}
+        active={active}
+        color={active ? colors.headerAccent : colors.headerTextMuted}
+      />
       <Text style={[styles.navItemText, {
         color: active ? colors.headerAccent : colors.headerTextMuted,
         fontWeight: active ? '600' : '500',
       }]}>
         {label}
       </Text>
-    </TouchableOpacity>
+    </NavIconPressable>
   );
 }
 

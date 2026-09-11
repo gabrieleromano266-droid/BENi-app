@@ -8,12 +8,14 @@ type Props = {
   fileName: string;
   onOpen: () => void;
   onDelete: () => void;
+  /** Optional "move to folder" action; the button only renders when provided. */
+  onMove?: () => void;
   selected?: boolean;
   selectionMode?: boolean;
   onLongPress?: () => void;
 };
 
-export default function FileItem({ fileName, onOpen, onDelete, selected, selectionMode, onLongPress }: Props) {
+export default function FileItem({ fileName, onOpen, onDelete, onMove, selected, selectionMode, onLongPress }: Props) {
   const { colors } = useTheme();
 
   const handlePress = () => {
@@ -64,6 +66,19 @@ export default function FileItem({ fileName, onOpen, onDelete, selected, selecti
 
       {!selectionMode && (
         <>
+          {onMove && (
+            <>
+              <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />
+              <IconButton
+                icon="drive-file-move-outline"
+                iconSize={18}
+                size={46}
+                onPress={onMove}
+                iconColor={colors.border}
+                style={{ backgroundColor: 'transparent', borderRadius: 0 }}
+              />
+            </>
+          )}
           <View style={[styles.divider, { backgroundColor: colors.borderLight }]} />
           <IconButton
             icon="delete-outline"

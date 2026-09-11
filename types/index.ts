@@ -88,4 +88,13 @@ export type FileRecord = {
   file_name: string;
   file_path: string;
   property_id: string | null;
+  /** null = not filed in any folder (shown at the top level) */
+  folder_id?: string | null;
+};
+
+/** A user-created folder for grouping documents. Flat — no nesting. */
+export type DocumentFolder = {
+  id: string;
+  name: string;
+  created_at?: string;
 };
