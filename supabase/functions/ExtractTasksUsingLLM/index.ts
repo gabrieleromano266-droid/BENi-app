@@ -719,6 +719,88 @@ function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogR
     });
 }
 
+/**
+ * Re-link EXISTING tasks to pages, without calling the AI at all.
+ *
+ * Tasks extracted before page tracking existed have no source_page, and a
+ * whole-document keyword search is too blunt to recover it: an inspection PDF
+ * is mostly photographs, so a single page carries very few words and several
+ * pages tie. Measured on the 22 Sandstone report, that approach put the wrong
+ * page on roughly one task in ten, several pages out.
+ *
+ * This instead matches each task to the CHUNK it most likely came from -- a
+ * whole report section, thousands of characters rather than dozens of words, so
+ * the winner is far clearer -- and only then narrows to a page inside that
+ * chunk with the same refinePage() the live extraction uses. Same evidence the
+ * fresh path has, applied after the fact.
+ */
+type RelinkResult = { updated: number; skipped: number; total: number };
+
+async function relinkPages(
+  supabase: ReturnType<typeof createClient>,
+  filePath: string,
+  fileId: string,
+  onlyMissing: boolean,
+): Promise<RelinkResult> {
+  const { data: fileBlob, error: downloadError } = await supabase.storage
+    .from('user_files')
+    .download(filePath);
+  if (downloadError || !fileBlob) {
+    throw new Error(`Could not download the report. ${downloadError?.message ?? ''}`.trim());
+  }
+
+  const report = preparePdfText(await extractPdfPages(new Uint8Array(await fileBlob.arrayBuffer())));
+  const chunks = splitIntoChunks(report.text);
+  const chunkWords = chunks.map((c) => new Set(c.text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ')));
+
+  let query = supabase.from('tasks').select('id, title, location, source_page').eq('file_id', fileId);
+  if (onlyMissing) query = query.is('source_page', null);
+  const { data: rows, error: readError } = await query;
+  if (readError) throw new Error(`Could not read tasks: ${readError.message}`);
+
+  const tasks = (rows ?? []) as { id: string; title: string; location: string | null }[];
+  let updated = 0;
+  let skipped = 0;
+
+  for (const row of tasks) {
+    const words = pageKeywords(row.title, row.location);
+    if (words.length === 0) { skipped++; continue; }
+
+    // Which section does this finding belong to?
+    let bestChunk = -1;
+    let bestScore = 0;
+    let runnerUp = 0;
+    chunkWords.forEach((set, i) => {
+      const score = words.reduce((n, w) => n + (set.has(w) ? 1 : 0), 0);
+      if (score > bestScore) { runnerUp = bestScore; bestScore = score; bestChunk = i; }
+      else if (score > runnerUp) { runnerUp = score; }
+    });
+
+    // Needs a real match and a clear winner, otherwise leave it blank: a link
+    // to the wrong page is worse than no link at all.
+    if (bestChunk < 0 || bestScore < 2 || bestScore === runnerUp) { skipped++; continue; }
+
+    const chunk = chunks[bestChunk];
+    const firstPage = pageForOffset(chunk.start, report.pageStarts);
+    const lastPage = pageForOffset(chunk.start + chunk.text.length, report.pageStarts);
+    const page = refinePage(
+      { title: row.title, location: row.location } as ExtractedTask,
+      report.pages,
+      firstPage,
+      lastPage,
+    );
+
+    const { error: writeError } = await supabase
+      .from('tasks')
+      .update({ source_page: page })
+      .eq('id', row.id);
+    if (writeError) { skipped++; continue; }
+    updated++;
+  }
+
+  return { updated, skipped, total: tasks.length };
+}
+
 // ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
@@ -732,7 +814,8 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
-    const { description = '', file_path: filePath } = await req.json();
+    const body = await req.json();
+    const { description = '', file_path: filePath } = body;
     if (!filePath) throw new Error('file_path is required');
 
     // Service-role client: needed to read the private user_files bucket.
@@ -748,6 +831,25 @@ Deno.serve(async (req: Request) => {
       .download(filePath);
     if (downloadError || !fileBlob) {
       throw new Error(`Could not download the uploaded file. ${downloadError?.message ?? ''}`.trim());
+    }
+
+    // RE-LINK MODE: recompute source_page for tasks that already exist, with no
+    // AI call and no new tasks created. Used to repair reports processed before
+    // page tracking existed.
+    if (body.relink_file_id) {
+      const result = await relinkPages(
+        supabase,
+        filePath,
+        String(body.relink_file_id),
+        body.only_missing !== false,
+      );
+      console.log(
+        `Re-linked pages for file ${body.relink_file_id}: ` +
+        `${result.updated} updated, ${result.skipped} left blank, ${result.total} considered.`,
+      );
+      return new Response(JSON.stringify(result), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     // Load the catalog the model matches findings against.
