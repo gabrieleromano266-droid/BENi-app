@@ -24,6 +24,8 @@ export type ExtractedTask = {
   catalogId: string | null;
   /** 1-based page of the report this finding was found on, or null */
   sourcePage: number | null;
+  /** Trust level of the cost estimate: 'High' | 'Medium' | 'Low', or null */
+  costConfidence: string | null;
 };
 
 /**

@@ -40,6 +40,8 @@ export type TaskType = {
   catalogId?: string | null;
   /** 1-based page of the inspection PDF this finding came from */
   sourcePage?: number | null;
+  /** How much the cost estimate is trusted: 'High' | 'Medium' | 'Low', or null */
+  costConfidence?: string | null;
 };
 
 /** Raw DB row from the tasks table */
@@ -66,6 +68,7 @@ export type DBTask = {
   recurrence: string | null;
   catalog_id?: string | null;
   source_page?: number | null;
+  cost_confidence?: string | null;
 };
 
 /** DBTask enriched with the property name (used on dashboard) */

@@ -50,6 +50,8 @@ type ExtractedTask = {
   catalogId: string | null;
   /** 1-based page of the source PDF. Computed from offsets, never guessed by the model. */
   sourcePage: number | null;
+  /** How much the catalog's price is trusted: High | Medium | Low, or null when unmatched. */
+  costConfidence: string | null;
 };
 
 // Section headings used by the target inspection format. Findings live under
@@ -66,6 +68,7 @@ type CatalogRow = {
   cost_low: number | null;
   cost_typical: number | null;
   cost_high: number | null;
+  confidence: string | null;
 };
 
 const SECTION_HEADERS = [
@@ -676,6 +679,9 @@ function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogR
       recurrence: str(t.recurrence),
       catalogId: match ? match.id : null,   // drop hallucinated ids
       sourcePage: Number.isInteger(t.sourcePage) && (t.sourcePage as number) > 0 ? t.sourcePage : null,
+      // Unmatched findings keep null: the price is then the model's own guess,
+      // which the UI labels more cautiously than any catalog figure.
+      costConfidence: null,
       };
 
       // Never leave a task uncategorised - it would vanish from the score.
@@ -713,6 +719,7 @@ function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogR
         location: base.location ?? match.location,
         // The catalog's homeowner-language wording beats a paraphrase of jargon.
         issue: match.meaning ?? base.issue,
+        costConfidence: match.confidence ?? null,
         timingNote: base.timingNote ?? (match.urgency ? `Typical timeframe: ${match.urgency}` : null),
         dueDate: deriveDueDate(base, match.urgency),
       };
@@ -855,7 +862,7 @@ Deno.serve(async (req: Request) => {
     // Load the catalog the model matches findings against.
     const { data: catalogRows, error: catalogError } = await supabase
       .from('cost_catalog')
-      .select('id, system, component, defect, location, meaning, severity, urgency, cost_low, cost_typical, cost_high');
+      .select('id, system, component, defect, location, meaning, severity, urgency, cost_low, cost_typical, cost_high, confidence');
     if (catalogError) console.error('cost_catalog load failed:', catalogError.message);
 
     const catalog = new Map<string, CatalogRow>();

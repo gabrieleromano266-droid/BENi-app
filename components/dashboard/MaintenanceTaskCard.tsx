@@ -45,6 +45,28 @@ function formatCost(min: number | null, max: number | null): string | null {
   return `$${only.toLocaleString()}`;
 }
 
+/**
+ * What the price actually is, said plainly.
+ *
+ * Every figure in the catalog is a PLANNING RANGE, not a quote, and the
+ * catalog itself records how well researched each one is. Showing a bare
+ * dollar range implies more precision than we have -- only 72 of 224 catalog
+ * entries are High confidence today -- so the card says so out loud. An
+ * unmatched finding has no catalog entry at all and is the model's own guess,
+ * which earns the bluntest wording.
+ */
+const COST_CAVEAT: Record<string, string> = {
+  High: 'Well-researched Calgary range',
+  Medium: 'Planning range — quotes often run higher once access is known',
+  Low: 'Rough guide only — get quotes before budgeting',
+};
+const UNMATCHED_CAVEAT = 'Rough estimate — not from the Calgary cost database';
+
+function costCaveat(confidence: string | null | undefined, hasCatalogMatch: boolean): string {
+  if (!hasCatalogMatch) return UNMATCHED_CAVEAT;
+  return COST_CAVEAT[confidence ?? ''] ?? COST_CAVEAT.Medium;
+}
+
 function formatDoItBy(dueDate: string | null, timingNote: string | null): string | null {
   const parts: string[] = [];
   if (dueDate) {
@@ -81,6 +103,7 @@ export default function MaintenanceTaskCard({ task, showProperty, onComplete, on
   const cost = formatCost(task.cost_min, task.cost_max);
   const isMajorExpense = (task.cost_max ?? 0) >= MAJOR_EXPENSE_THRESHOLD;
   const doItBy = formatDoItBy(task.due_date, task.timing_note);
+  const priceNote = cost ? costCaveat(task.cost_confidence, !!task.catalog_id) : null;
 
   return (
     <View
@@ -164,6 +187,7 @@ export default function MaintenanceTaskCard({ task, showProperty, onComplete, on
               bold
             />
           )}
+          {!!priceNote && <DetailRow label="How sure" value={priceNote} colors={colors} />}
           {!!doItBy && <DetailRow label="Do it by" value={doItBy} colors={colors} accent />}
           {canViewSource && (
             <DetailRow
