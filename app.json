@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "real-asset-app",
+    "name": "BENi",
     "slug": "real-asset-app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -23,8 +23,7 @@
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png",
-      "baseUrl": "/real-asset-app"
+      "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
       "expo-router",
@@ -48,7 +47,7 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true,
-      "baseUrl": "/real-asset-app"
+      "baseUrl": "/BENi-app"
     }
   }
 }
