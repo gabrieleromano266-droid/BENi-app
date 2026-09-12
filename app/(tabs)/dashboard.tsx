@@ -55,6 +55,7 @@ export default function DashboardScreen() {
   const [loadingTasks, setLoadingTasks] = useState(true);
   const [completedCount, setCompletedCount] = useState(0);
   const [settingUpPlan, setSettingUpPlan] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   /**
    * A report mixes real jobs with general upkeep advice and administrative
    * notes. Showing all three as one list is what made the plan 150+ items
@@ -102,8 +103,16 @@ export default function DashboardScreen() {
   const loadTasks = async (uid: string) => {
     setLoadingTasks(true);
     setAllTasks(await fetchAllTasksForUser(uid));
-    const done = await fetchCompletedTasksForUser(uid);
-    setCompletedTasks(done.map((t) => ({ ...t, propertyName: '', fileName: '' })));
+    try {
+      const done = await fetchCompletedTasksForUser(uid);
+      setCompletedTasks(done.map((t) => ({ ...t, propertyName: '', fileName: '' })));
+    } catch (err) {
+      // Don't let the completed list take the whole dashboard down with it.
+      console.error(err);
+      setCompletedTasks([]);
+      setSuccessMessage(null);
+      setLoadError((err as Error).message);
+    }
     setLoadingTasks(false);
   };
 
@@ -138,6 +147,10 @@ export default function DashboardScreen() {
       const propertyName = nextTask.property_id ? (properties.find((p) => p.id === nextTask.property_id)?.name || '') : '';
       return sortByDueDate([...without, { ...nextTask, propertyName, fileName: '' }]);
     });
+    setCompletedTasks((prev) => [
+      { ...completingTask, completed_at: new Date().toISOString(), propertyName: '', fileName: '' },
+      ...prev,
+    ]);
     setCompletingTask(null);
     setCompletedCount((c) => c + 1);
     setSuccessMessage('Task completed!');
@@ -468,6 +481,13 @@ export default function DashboardScreen() {
         task={completingTask ? dbTaskToTaskType(completingTask) : null}
         onClose={() => setCompletingTask(null)}
         onComplete={handleCompleteTask}
+      />
+
+      <InfoPopup
+        visible={!!loadError}
+        type="error"
+        message={loadError ?? ''}
+        onClose={() => setLoadError(null)}
       />
 
       <InfoPopup

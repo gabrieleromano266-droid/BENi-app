@@ -117,11 +117,18 @@ export default function MaintenanceTaskCard({ task, showProperty, onComplete, on
                 <Text style={[styles.metaText, { color: colors.textMuted }]}>{task.propertyName}</Text>
               </>
             )}
-            {!!task.recur_frequency && (
+            {/* A routine item must always say it is ongoing, even when we do
+                not know the exact cadence — otherwise it reads like a one-off
+                job the homeowner has somehow failed to do. Order of
+                preference: our own schedule, then the cadence borrowed from
+                the recurring bank, then a plain "Ongoing". */}
+            {(!!task.recur_frequency || !!task.recurrence || task.task_kind === 'routine') && (
               <View style={[styles.recurPill, { backgroundColor: colors.infoLight }]}>
                 <MaterialIcons name="refresh" size={10} color={colors.info} />
                 <Text style={[styles.recurText, { color: colors.info }]}>
-                  {cadenceLabel(task.recur_frequency, task.recur_interval)}
+                  {task.recur_frequency
+                    ? cadenceLabel(task.recur_frequency, task.recur_interval)
+                    : task.recurrence || 'Ongoing'}
                 </Text>
               </View>
             )}

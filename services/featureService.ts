@@ -2,6 +2,7 @@ import { supabase } from '@/services/supabase';
 import { DBTask, StandardFeature } from '@/types';
 // Single source of truth — a local copy silently drifts when columns are added.
 import { TASK_FIELDS } from '@/services/taskService';
+import { alreadyCovered, titleTokens } from '@/utils/taskMatching';
 
 
 export async function fetchStandardFeatures(): Promise<StandardFeature[]> {
@@ -46,13 +47,17 @@ export async function addFeatureToProperty(
     .eq('property_id', propertyId)
     .is('completed_at', null);
 
-  const existingTitles = new Set(
-    (existingTasks || []).map((t) => t.title.toLowerCase().trim()),
-  );
+  // Exact-title matching missed the obvious cases: the inspector writes "Clean
+  // front eavestrough", our standard task says "Clean gutters and downspouts",
+  // and the homeowner ends up with both. Compare meaning, not spelling.
+  const existingTokens = (existingTasks || []).map((t) => titleTokens(t.title));
 
-  const toCreate = stdTasks.filter(
-    (st) => !existingTitles.has(st.title.toLowerCase().trim()),
-  );
+  const toCreate = stdTasks.filter((st) => !alreadyCovered(st.title, existingTokens));
+
+  const skipped = stdTasks.length - toCreate.length;
+  if (skipped > 0) {
+    console.log(`Recurring plan: skipped ${skipped} job(s) the report already covers.`);
+  }
 
   if (!toCreate.length) return [];
 

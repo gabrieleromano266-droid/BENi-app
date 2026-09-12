@@ -139,13 +139,22 @@ export async function fetchAttentionTasks(userId: string): Promise<AttentionTask
 
 /** Fetch COMPLETED tasks (most recently completed first) for the "Completed" view. */
 export async function fetchCompletedTasksForUser(userId: string): Promise<DBTask[]> {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('tasks')
     .select(TASK_FIELDS)
     .eq('user_id', userId)
     .not('completed_at', 'is', null)
     .order('completed_at', { ascending: false });
-  return data || [];
+
+  // This used to discard `error` and return []. The Completed tile counts with
+  // a separate query, so a failure here looked exactly like "you have nothing
+  // completed" — the tile said 5 and the list said none, with nothing anywhere
+  // to explain the difference. Never swallow this again.
+  if (error) {
+    console.error('Could not load completed tasks:', error.message, error.details ?? '');
+    throw new Error(`Could not load your completed items: ${error.message}`);
+  }
+  return data ?? [];
 }
 
 /** Count completed tasks for a user, optionally scoped to one property (dashboard "Completed" stat) */

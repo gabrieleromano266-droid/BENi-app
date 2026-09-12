@@ -761,6 +761,47 @@ function deriveDueDate(t: ExtractedTask, urgency: string | null | undefined): st
 }
 
 /**
+ * Give a routine finding its real cadence.
+ *
+ * The report says "replace the filters routinely" and stops there. Our
+ * recurring bank knows that job is every three months. Matching the two by
+ * meaning lets the card say "Every 3 months" instead of the useless
+ * "routinely", which is the difference between advice and a plan.
+ *
+ * 0.6, looser than the extractor's own 0.7: one title is written by us and the
+ * other by an inspector, so the wording diverges more.
+ */
+function adoptCadence(
+  tasks: ExtractedTask[],
+  bank: { title: string; recur_frequency: string | null; recur_interval: number | null }[],
+): number {
+  if (bank.length === 0) return 0;
+  const bankTokens = bank.map((b) => titleTokens(b.title));
+  let adopted = 0;
+
+  for (const t of tasks) {
+    if (t.taskKind !== 'routine' || t.recurrence) continue;
+    const tok = titleTokens(t.title || '');
+    let best = -1;
+    let bestScore = 0.6;
+    bankTokens.forEach((bt, i) => {
+      const score = tokenOverlap(tok, bt);
+      if (score >= bestScore) { bestScore = score; best = i; }
+    });
+    if (best === -1) continue;
+    const b = bank[best];
+    if (!b.recur_frequency) continue;
+    const every = b.recur_interval ?? 1;
+    const unit = b.recur_frequency.replace(/ly$/, '');
+    t.recurrence = every === 1
+      ? `Every ${unit === 'dai' ? 'day' : unit}`
+      : `Every ${every} ${unit === 'dai' ? 'day' : unit}s`;
+    adopted++;
+  }
+  return adopted;
+}
+
+/**
  * Only real jobs get a deadline.
  *
  * A due date on "replace the filters routinely" or "obtain your warranties" is
@@ -1097,6 +1138,14 @@ Deno.serve(async (req: Request) => {
     await matchFindings(findings, catalogText);
     const deduped = mergeSameCatalogEntry(findings);
     const tasks = sanitizeAndEnrich(deduped, catalog);
+
+    // Turn "replace the filters routinely" into "Every 3 months" by borrowing
+    // the cadence from the recurring bank.
+    const { data: bankRows } = await supabase
+      .from('standard_tasks')
+      .select('title, recur_frequency, recur_interval');
+    const adopted = adoptCadence(tasks, bankRows ?? []);
+    if (adopted > 0) console.log(`Gave ${adopted} routine finding(s) a real cadence from the bank.`);
     const matched = tasks.filter((t) => t.catalogId).length;
     const paged = tasks.filter((t) => t.sourcePage).length;
     const kinds = tasks.reduce((acc: Record<string, number>, t) => {
