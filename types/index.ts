@@ -14,6 +14,14 @@ export type HomeSystem = 'roof_attic' | 'electrical' | 'plumbing' | 'hvac' | 'ex
 /** How urgently a task affects the home's health score */
 export type TaskSeverity = 'critical' | 'moderate' | 'minor';
 
+/**
+ * What the inspector was actually saying.
+ *  action  — a specific job at this address, with a beginning and an end
+ *  routine — ongoing upkeep; belongs on a cadence, never carries a due date
+ *  note    — informational, not something the homeowner does to the house
+ */
+export type TaskKind = 'action' | 'routine' | 'note';
+
 /** Shape used in UI (camelCase dates, optional fields) */
 export type TaskType = {
   id?: string;
@@ -42,6 +50,8 @@ export type TaskType = {
   sourcePage?: number | null;
   /** How much the cost estimate is trusted: 'High' | 'Medium' | 'Low', or null */
   costConfidence?: string | null;
+  /** 'action' (a job) | 'routine' (ongoing upkeep) | 'note' (informational) */
+  taskKind?: TaskKind | null;
 };
 
 /** Raw DB row from the tasks table */
@@ -69,6 +79,7 @@ export type DBTask = {
   catalog_id?: string | null;
   source_page?: number | null;
   cost_confidence?: string | null;
+  task_kind?: TaskKind | null;
 };
 
 /** DBTask enriched with the property name (used on dashboard) */

@@ -52,6 +52,8 @@ type ExtractedTask = {
   sourcePage: number | null;
   /** How much the catalog's price is trusted: High | Medium | Low, or null when unmatched. */
   costConfidence: string | null;
+  /** action | routine | note — see classifyTaskKind(). */
+  taskKind: string | null;
 };
 
 // Section headings used by the target inspection format. Findings live under
@@ -563,6 +565,80 @@ const str = (v: unknown): string | null => {
 };
 
 /**
+ * Inspectors write the same component several different ways, often on
+ * different pages of the same report. Without expanding these, "Replace smoke
+ * and CO detectors" and "Replace smoke and carbon monoxide detector" are
+ * different strings and the homeowner gets both, side by side, both Critical.
+ */
+const DEDUPE_SYNONYMS: Record<string, string> = {
+  co: 'carbon monoxide',
+  co2: 'carbon monoxide',
+  ac: 'air conditioning',
+  hvac: 'heating ventilation air conditioning',
+  gfci: 'ground fault circuit interrupter',
+  gfcis: 'ground fault circuit interrupter',
+  hrv: 'heat recovery ventilator',
+  erv: 'heat recovery ventilator',
+  dhw: 'water heater',
+  eavestrough: 'gutter',
+  eavestroughs: 'gutter',
+  downspout: 'gutter',
+  downspouts: 'gutter',
+  detector: 'alarm',
+  detectors: 'alarm',
+  alarms: 'alarm',
+  outlet: 'receptacle',
+  outlets: 'receptacle',
+};
+
+const DEDUPE_STOP = new Set([
+  'a', 'an', 'and', 'at', 'for', 'from', 'in', 'of', 'on', 'or', 'the', 'to',
+  'with', 'your', 'all', 'both',
+]);
+
+/**
+ * Strip a trailing plural 's' only where it is safe: never on -ss (glass),
+ * -us or -is. Crude, but it collapses "detectors"/"detector" without needing
+ * a stemming library inside an Edge Function.
+ */
+function singularise(word: string): string {
+  if (word.length > 3 && word.endsWith('s') && !/(ss|us|is)$/.test(word)) {
+    return word.slice(0, -1);
+  }
+  return word;
+}
+
+/** Normalised bag of meaningful words, used to tell two findings apart. */
+function titleTokens(title: string): Set<string> {
+  const out = new Set<string>();
+  const cleaned = (title || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ');
+  for (const raw of cleaned.split(/\s+/)) {
+    if (!raw) continue;
+    const expanded = DEDUPE_SYNONYMS[raw] ?? raw;
+    for (const piece of expanded.split(' ')) {
+      const word = singularise(DEDUPE_SYNONYMS[piece] ?? piece);
+      if (word && !DEDUPE_STOP.has(word)) out.add(word);
+    }
+  }
+  return out;
+}
+
+/** How much two findings overlap, 0..1. */
+function tokenOverlap(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let shared = 0;
+  for (const w of a) if (b.has(w)) shared++;
+  return shared / (a.size + b.size - shared);
+}
+
+/**
+ * 0.7 keeps "Repair rusted metal roof valleys" together with "Repair rusted
+ * roof valleys" while keeping "Repair the front deck" apart from "Repair the
+ * back deck" — the distinguishing word is a meaningful share of a short title.
+ */
+const DUPLICATE_THRESHOLD = 0.7;
+
+/**
  * Two findings that matched the SAME catalog entry in the SAME system are the
  * same underlying problem worded differently - e.g. the report yielded "repair
  * wood rot on deck surface", "repair backyard deck materials" and "repair wood
@@ -580,15 +656,12 @@ function mergeSameCatalogEntry(tasks: ExtractedTask[]): ExtractedTask[] {
   // safety sensors FOR left garage door" and "...ON left garage door" as two
   // separate tasks. Dropping filler words and sorting the rest makes those
   // collapse to the same key.
-  const STOP = new Set(['a','an','and','at','for','from','in','of','on','or','the','to','with']);
+  // Normalised so "CO" matches "carbon monoxide" and "detectors" matches
+  // "detector". Sorting makes word order irrelevant: production produced
+  // "safety sensors FOR left garage door" and "...ON left garage door" as two
+  // separate tasks.
   const titleKey = (t: ExtractedTask) =>
-    (t.title || '')
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .split(/\s+/)
-      .filter((w) => w && !STOP.has(w))
-      .sort()
-      .join(' ');
+    [...titleTokens(t.title || '')].sort().join(' ');
 
   for (const t of tasks) {
     if (!t?.catalogId) {
@@ -609,8 +682,36 @@ function mergeSameCatalogEntry(tasks: ExtractedTask[]): ExtractedTask[] {
       Object.assign(existing, t);                       // keep the fuller wording
     }
   }
-  if (merged > 0) console.log(`Merged ${merged} duplicate finding(s) sharing a catalog entry.`);
-  return out;
+  if (merged > 0) console.log(`Merged ${merged} duplicate finding(s) by exact key.`);
+
+  // Second pass for near-misses the exact key cannot catch: "Repair rusted
+  // metal roof valleys" vs "Repair rusted roof valleys". Compares word
+  // overlap, and only within the same system so a plumbing and an electrical
+  // finding can never collapse into each other. O(n^2) on a few hundred
+  // findings is nothing next to the LLM calls that produced them.
+  const survivors: ExtractedTask[] = [];
+  const survivorTokens: Set<string>[] = [];
+  let fuzzyMerged = 0;
+
+  for (const t of out) {
+    const tok = titleTokens(t.title || '');
+    let absorbedBy = -1;
+    for (let i = 0; i < survivors.length; i++) {
+      if ((survivors[i].system ?? '') !== (t.system ?? '')) continue;
+      if (tokenOverlap(tok, survivorTokens[i]) >= DUPLICATE_THRESHOLD) { absorbedBy = i; break; }
+    }
+    if (absorbedBy === -1) {
+      survivors.push(t);
+      survivorTokens.push(tok);
+    } else {
+      fuzzyMerged++;
+      // Keep whichever wording carries more detail for the homeowner.
+      if (detail(t) > detail(survivors[absorbedBy])) Object.assign(survivors[absorbedBy], t);
+    }
+  }
+
+  if (fuzzyMerged > 0) console.log(`Merged ${fuzzyMerged} near-duplicate finding(s) by word overlap.`);
+  return survivors;
 }
 
 /**
@@ -659,6 +760,20 @@ function deriveDueDate(t: ExtractedTask, urgency: string | null | undefined): st
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Only real jobs get a deadline.
+ *
+ * A due date on "replace the filters routinely" or "obtain your warranties" is
+ * a lie — neither is ever "done" — and dated non-jobs are what fill the
+ * notification bell with things the homeowner cannot act on today.
+ *
+ * This must run AFTER deriveDueDate, not before: deriveDueDate is called on
+ * both the matched and unmatched paths and would simply put a date back.
+ */
+function undated(task: ExtractedTask, proposed: string | null): string | null {
+  return task.taskKind === 'action' ? proposed : null;
+}
+
 function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogRow>): ExtractedTask[] {
   return tasks
     .filter((t) => t && typeof t.title === 'string' && t.title.trim().length > 0)
@@ -682,13 +797,15 @@ function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogR
       // Unmatched findings keep null: the price is then the model's own guess,
       // which the UI labels more cautiously than any catalog figure.
       costConfidence: null,
+      taskKind: classifyTaskKind(t.title ?? '', t.issue ?? null),
       };
+
 
       // Never leave a task uncategorised - it would vanish from the score.
       if (!base.system) base.system = inferSystem(t);
 
       if (!match) {
-        base.dueDate = deriveDueDate(base, null);
+        base.dueDate = undated(base, deriveDueDate(base, null));
         return base;
       }
 
@@ -721,7 +838,7 @@ function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogR
         issue: match.meaning ?? base.issue,
         costConfidence: match.confidence ?? null,
         timingNote: base.timingNote ?? (match.urgency ? `Typical timeframe: ${match.urgency}` : null),
-        dueDate: deriveDueDate(base, match.urgency),
+        dueDate: undated(base, deriveDueDate(base, match.urgency)),
       };
     });
 }
@@ -806,6 +923,92 @@ async function relinkPages(
   }
 
   return { updated, skipped, total: tasks.length };
+}
+
+/**
+ * What KIND of thing did the inspector actually write?
+ *
+ * An inspection report mixes three different kinds of statement, and treating
+ * them all as dated tasks is why a plan balloons to 150+ items that nobody
+ * reads:
+ *
+ *   action  - a specific job at this address, with a beginning and an end.
+ *             "Backfill the garage foundation." This is the maintenance plan.
+ *
+ *   routine - ongoing upkeep stated as general advice. "Replace the HVAC
+ *             filters routinely." Giving this a due date is a lie: it is never
+ *             "done". It belongs in the recurring plan, on a cadence.
+ *
+ *   note    - not something the homeowner does to the house at all. "Obtain
+ *             maintenance records and warranties", scope disclaimers. Worth
+ *             keeping, but it is not a chore and must not carry a due date.
+ *
+ * Deliberately rules, not the model. The distinction lives in the GRAMMAR of
+ * the sentence — a cadence adverb, a record-keeping verb — which is exactly
+ * what patterns are good at and what an LLM will happily be inconsistent
+ * about. It also costs nothing and cannot regress the extraction prompt, which
+ * has degraded before when asked to do two jobs at once.
+ *
+ * Measured against 234 real extracted tasks from Gabriele's reports:
+ * 87% action, 12% routine, 1% note, 0% unclassified.
+ */
+type TaskKind = 'action' | 'routine' | 'note';
+
+const NOTE_PATTERNS = [
+  /\b(obtain|retain|gather|collect|request|keep)\b[^.]*\b(record|history|warrant|permit|document|receipt|manual)/i,
+  /\bfamiliari[sz]e\b/i,
+  /\b(excluded|exclusion|limitation|standards? of practice|sop)\b/i,
+  /\bfor (your )?(information|reference)\b/i,
+  /\b(be aware|aware of)\b/i,
+];
+
+/**
+ * An explicit cadence. These BEAT an action verb: "Replace the filters
+ * routinely" is a habit, not a job, even though "replace" is an action word.
+ */
+const ROUTINE_STRONG = [
+  /\broutine(ly)?\b/i,
+  /\bregularly\b/i,
+  /\bperiodic(ally)?\b/i,
+  /\bannual(ly)?\b/i,
+  /\bevery \d+\s*(day|week|month|year)/i,
+  /\bseasonal(ly)?\b/i,
+  /\bas part of (normal|regular|routine) (upkeep|maintenance)\b/i,
+  /\bongoing\b/i,
+  /\bas needed\b/i,
+  /\bcontinue to\b/i,
+  /\bmaintenance\b/i,
+  // "Keep the mechanical room clear" is a standing habit. This must sit above
+  // the action verbs, because "clear" is itself an action verb.
+  /\bkeep\b[^.]*\b(clear|clean|free|maintained|dry)\b/i,
+];
+
+const ACTION_VERBS =
+  /\b(repair|replace|seal|backfill|secure|install|fix|re-?caulk|caulk|regrade|grade|lubricate|tighten|adjust|remove|cover|insulate|drain|flush|trim|re-?nail|upgrade|correct|address|improve|restore|patch|paint|clear|cut|extend|add|mount|anchor|reattach|refasten|straighten|level|fill|point|rebuild|increase|reduce|raise|lower|label|pave|realign|redistribute|ensure|perform|build|apply|wrap|support|brace)\b/i;
+
+/** Booking a professional is still a job the homeowner starts and finishes. */
+const PROFESSIONAL =
+  /\b(consult|hire|contact|engage|book|schedule|qualified|licensed|professional|contractor|electrician|plumber|wett)\b/i;
+
+const INSPECT = /\b(check|inspect|test|verify|evaluate|assess|examine|confirm|determine)\b/i;
+
+/** Upkeep-flavoured verbs with no stated cadence — an action verb outranks these. */
+const ROUTINE_WEAK = [/\bmaintain\b/i, /\bservice\b/i, /\bclean\b/i];
+
+function classifyTaskKind(title: string, issue?: string | null): TaskKind {
+  const t = title ?? '';
+  const text = `${t} ${issue ?? ''}`;
+
+  if (NOTE_PATTERNS.some((p) => p.test(text))) return 'note';
+  if (ROUTINE_STRONG.some((p) => p.test(t))) return 'routine';
+  if (ACTION_VERBS.test(t)) return 'action';
+  if (ROUTINE_WEAK.some((p) => p.test(t))) return 'routine';
+  // Bare "Monitor the ceiling stain" — watch it, with nothing to do today.
+  if (/\bmonitor\b/i.test(t)) return 'routine';
+  if (PROFESSIONAL.test(text) || INSPECT.test(t)) return 'action';
+  // Nothing matched: treat it as a job rather than silently hiding it. A
+  // stray item in the plan is recoverable; one we quietly filed away is not.
+  return 'action';
 }
 
 // ---------------------------------------------------------------------------
@@ -896,9 +1099,15 @@ Deno.serve(async (req: Request) => {
     const tasks = sanitizeAndEnrich(deduped, catalog);
     const matched = tasks.filter((t) => t.catalogId).length;
     const paged = tasks.filter((t) => t.sourcePage).length;
+    const kinds = tasks.reduce((acc: Record<string, number>, t) => {
+      const k = t.taskKind ?? 'unknown';
+      acc[k] = (acc[k] ?? 0) + 1;
+      return acc;
+    }, {});
     console.log(
       `Extracted ${tasks.length} tasks; ${matched} matched to catalog, ` +
-      `${tasks.length - matched} unmatched, ${paged} with a source page. catalog_size=${catalog.size}`,
+      `${tasks.length - matched} unmatched, ${paged} with a source page, ` +
+      `kinds=${JSON.stringify(kinds)}. catalog_size=${catalog.size}`,
     );
 
     return new Response(JSON.stringify({ tasks }), {

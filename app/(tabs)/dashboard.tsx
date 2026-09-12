@@ -27,7 +27,7 @@ import {
 import { BREAKPOINT, SIDEBAR_BREAKPOINT, SIDEBAR_WIDTH } from '@/theme/layout';
 import { useTheme } from '@/theme/ThemeContext';
 import { fonts, fontSize, radius, spacing } from '@/theme/tokens';
-import { Property, TaskRow } from '@/types';
+import { Property, TaskKind, TaskRow } from '@/types';
 import { computeHealthScores, getStartHereSuggestion } from '@/utils/healthScore';
 import { dbTaskToTaskType, sortByDueDate } from '@/utils/taskUtils';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
@@ -55,6 +55,12 @@ export default function DashboardScreen() {
   const [loadingTasks, setLoadingTasks] = useState(true);
   const [completedCount, setCompletedCount] = useState(0);
   const [settingUpPlan, setSettingUpPlan] = useState(false);
+  /**
+   * A report mixes real jobs with general upkeep advice and administrative
+   * notes. Showing all three as one list is what made the plan 150+ items
+   * long. Default to the jobs; the rest stay one tap away rather than hidden.
+   */
+  const [kindFilter, setKindFilter] = useState<TaskKind>('action');
 
   /** null = "All Properties" */
   const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
@@ -221,8 +227,20 @@ export default function DashboardScreen() {
   // is the filter contradicting itself — you cannot tell what you are looking
   // at. In the Completed view the chips count completed tasks instead, since
   // the open plan contains none of them by definition.
+  // Older tasks predate classification; treat an untagged task as a job so
+  // nothing silently disappears from the plan.
+  const matchesKind = (t: TaskRow) => (t.task_kind ?? 'action') === kindFilter;
+
+  const kindCounts = {
+    action: scopedTasks.filter((t) => (t.task_kind ?? 'action') === 'action').length,
+    routine: scopedTasks.filter((t) => t.task_kind === 'routine').length,
+    note: scopedTasks.filter((t) => t.task_kind === 'note').length,
+  };
+
   const chipSource =
-    severityFilter === 'completed' ? completedScoped : scopedTasks.filter(matchesSeverity);
+    severityFilter === 'completed'
+      ? completedScoped
+      : scopedTasks.filter((t) => matchesSeverity(t) && matchesKind(t));
 
   const unassignedInView = chipSource.filter((t) => !t.system).length;
 
@@ -241,7 +259,7 @@ export default function DashboardScreen() {
   const displayedTasks =
     severityFilter === 'completed'
       ? completedScoped.filter(matchesSystem)
-      : scopedTasks.filter((t) => matchesSystem(t) && matchesSeverity(t));
+      : scopedTasks.filter((t) => matchesSystem(t) && matchesSeverity(t) && matchesKind(t));
 
   const pendingDeleteTaskTitle = allTasks.find((t) => t.id === pendingDeleteTaskIds[0])?.title;
   const selectedProperty = selectedPropertyId ? properties.find((p) => p.id === selectedPropertyId) : null;
@@ -372,6 +390,18 @@ export default function DashboardScreen() {
             <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Your Maintenance Plan</Text>
             <IconButton icon="add" onPress={() => setAddTaskVisible(true)} size={30} />
           </View>
+
+          {!loadingTasks && scopedTasks.length > 0 && severityFilter !== 'completed' && (
+            <FilterChips
+              options={[
+                { label: `To do (${kindCounts.action})`, value: 'action' },
+                { label: `Routine upkeep (${kindCounts.routine})`, value: 'routine' },
+                ...(kindCounts.note > 0 ? [{ label: `Good to know (${kindCounts.note})`, value: 'note' }] : []),
+              ]}
+              selected={kindFilter}
+              onSelect={(v) => setKindFilter((v as TaskKind) ?? 'action')}
+            />
+          )}
 
           {!loadingTasks && scopedTasks.length > 0 && (
             <FilterChips options={filterOptions} selected={systemFilter} onSelect={setSystemFilter} />

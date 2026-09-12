@@ -1,5 +1,5 @@
 import { supabase } from '@/services/supabase';
-import { HomeSystem, TaskSeverity } from '@/types';
+import { HomeSystem, TaskKind, TaskSeverity } from '@/types';
 
 /**
  * What the ExtractTasksUsingLLM Edge Function returns for each finding.
@@ -26,6 +26,8 @@ export type ExtractedTask = {
   sourcePage: number | null;
   /** Trust level of the cost estimate: 'High' | 'Medium' | 'Low', or null */
   costConfidence: string | null;
+  /** 'action' | 'routine' | 'note' — what kind of statement this was */
+  taskKind: TaskKind | null;
 };
 
 /**
