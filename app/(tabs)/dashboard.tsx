@@ -199,19 +199,6 @@ export default function DashboardScreen() {
     ? completedTasks.filter((t) => t.property_id === selectedPropertyId)
     : completedTasks;
 
-  // In the Completed view the chips must count completed tasks, not open ones.
-  const chipSource = severityFilter === 'completed' ? completedScoped : scopedTasks;
-
-  const filterOptions: ChipOption[] = [
-    { label: `All (${chipSource.length})`, value: null },
-    // Show all six systems even at zero, so the filter row is predictable and a
-    // homeowner can see which parts of the home currently have nothing open.
-    ...SYSTEMS
-      .map((s) => ({ label: s.label, value: s.value as string, count: chipSource.filter((t) => t.system === s.value).length }))
-      .map((s) => ({ label: `${s.label} (${s.count})`, value: s.value })),
-    ...(unassignedCount > 0 ? [{ label: `Other (${unassignedCount})`, value: UNASSIGNED }] : []),
-  ];
-
   // System/category filter (from the chips) AND severity/status filter (from the
   // tiles) are combinable — e.g. Critical + Exterior shows only critical exterior tasks.
   const matchesSystem = (t: TaskRow) =>
@@ -227,6 +214,26 @@ export default function DashboardScreen() {
       default: return true;
     }
   };
+
+  // The chips must count what the TILE has already narrowed to, not everything.
+  // Selecting "Recurring (20)" and still reading "All (154)" above a list of 20
+  // is the filter contradicting itself — you cannot tell what you are looking
+  // at. In the Completed view the chips count completed tasks instead, since
+  // the open plan contains none of them by definition.
+  const chipSource =
+    severityFilter === 'completed' ? completedScoped : scopedTasks.filter(matchesSeverity);
+
+  const unassignedInView = chipSource.filter((t) => !t.system).length;
+
+  const filterOptions: ChipOption[] = [
+    { label: `All (${chipSource.length})`, value: null },
+    // Show all six systems even at zero, so the filter row is predictable and a
+    // homeowner can see which parts of the home currently have nothing open.
+    ...SYSTEMS
+      .map((s) => ({ label: s.label, value: s.value as string, count: chipSource.filter((t) => t.system === s.value).length }))
+      .map((s) => ({ label: `${s.label} (${s.count})`, value: s.value })),
+    ...(unassignedInView > 0 ? [{ label: `Other (${unassignedInView})`, value: UNASSIGNED }] : []),
+  ];
 
   // The Completed tile swaps the list over to finished work rather than filtering
   // the open plan (which by definition contains none of it).

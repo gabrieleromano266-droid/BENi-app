@@ -67,7 +67,13 @@ export async function addFeatureToProperty(
         recur_frequency: st.recur_frequency ?? null,
         recur_anchor: st.recur_anchor ?? null,
         recur_interval: st.recur_interval ?? 1,
-        due_date: firstDueDate(st.season ?? null, st.recur_frequency ?? null, st.recur_interval ?? 1),
+        due_date: firstDueDate(
+          st.season ?? null,
+          st.recur_frequency ?? null,
+          st.recur_interval ?? 1,
+          st.target_month ?? null,
+          st.id ?? 0,
+        ),
         system: st.system ?? null,
         cost_min: st.cost_min ?? null,
         cost_max: st.cost_max ?? null,
@@ -131,12 +137,37 @@ function firstDueDate(
   season: string | null,
   frequency: string | null,
   interval: number,
+  targetMonth?: number | null,
+  /** Anything stable per task (its id) — spreads jobs across the month. */
+  spread = 0,
 ): string {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   let due: Date;
 
-  if (season && SEASON_START[season]) {
+  if (targetMonth && targetMonth >= 1 && targetMonth <= 12) {
+    // These jobs have real timing: furnace service in September before every
+    // company is booked, gutters in October once the leaves are down, sump
+    // pumps in March before the melt. Scheduling by month rather than by season
+    // is both more accurate and stops ten jobs landing on one day.
+    // The day is staggered (1st, 8th, 15th, 22nd) so a month's work arrives as
+    // a few separate nudges instead of one wall of notifications.
+    const day = 1 + (Math.abs(spread) % 4) * 7;
+    due = new Date(today.getFullYear(), targetMonth - 1, day);
+
+    if (due <= today) {
+      if (targetMonth - 1 === today.getMonth()) {
+        // We are INSIDE the right month and its staggered day has just gone by.
+        // Rolling to next year would be badly wrong: on 12 September that would
+        // push "drain the outdoor taps" to September 2027, a full Calgary winter
+        // after the pipe would have burst. It is due now, so schedule it now.
+        due = new Date(today);
+        due.setDate(due.getDate() + 7);
+      } else {
+        due = new Date(today.getFullYear() + 1, targetMonth - 1, day);
+      }
+    }
+  } else if (season && SEASON_START[season]) {
     if (seasonOf(today) === season) {
       // Already in season — give them a fortnight rather than marking it due today.
       due = new Date(today);
