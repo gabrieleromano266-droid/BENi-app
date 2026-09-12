@@ -1,5 +1,6 @@
 import AddTaskModal from '@/components/AddTaskModal';
 import Card from '@/components/Card';
+import { SINGLE_PROPERTY_MODE } from '@/constants/app';
 import CompleteTaskModal, { CompleteResult } from '@/components/CompleteTaskModal';
 import ConfirmDeleteModal from '@/components/ConfirmDeleteModal';
 import AddPropertyPopup from '@/components/dashboard/AddPropertyPopup';
@@ -226,7 +227,7 @@ export default function DashboardScreen() {
         subtitleColor={colors.gold}
         right={
           <View style={styles.propertyIndicator}>
-            {properties.length > 1 && (
+            {!SINGLE_PROPERTY_MODE && properties.length > 1 && (
               <Dropdown
                 options={properties.map((p) => ({ label: p.name, value: p.id }))}
                 selected={selectedPropertyId}
@@ -244,7 +245,10 @@ export default function DashboardScreen() {
                 </Text>
               </View>
             )}
-            <IconButton icon="add" onPress={() => setAddPropertyVisible(true)} size={30} />
+            {/* Adding a second home is out of scope for the MVP. */}
+            {!SINGLE_PROPERTY_MODE && (
+              <IconButton icon="add" onPress={() => setAddPropertyVisible(true)} size={30} />
+            )}
           </View>
         }
       />
@@ -320,6 +324,15 @@ export default function DashboardScreen() {
         onAdd={handleAddTask}
         properties={properties}
       />
+
+      {/* One honest disclaimer for the whole page. This used to be a per-task
+          "How sure" line, which put a hedge on every single card and made the
+          app sound unsure of itself. Said once, plainly, at the bottom. */}
+      <Text style={[styles.disclaimer, { color: colors.textMuted, borderTopColor: colors.borderLight }]}>
+        Costs shown are planning estimates, not quotes. BENi can get them wrong —
+        always get a real estimate from a licensed professional before committing
+        to any work.
+      </Text>
 
       <AddPropertyPopup
         visible={addPropertyVisible}
@@ -469,6 +482,14 @@ const styles = StyleSheet.create({
   },
   healthCol: {
     width: 320,
+  },
+  disclaimer: {
+    fontSize: fontSize.xs,
+    lineHeight: 17,
+    borderTopWidth: 1,
+    paddingTop: spacing.md,
+    marginTop: spacing.sm,
+    marginBottom: spacing.xl,
   },
   tasksCol: {
     flex: 1,

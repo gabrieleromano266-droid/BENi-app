@@ -45,6 +45,8 @@ export async function uploadPropertyFile(
   propertyId: string,
   fileUri: string,
   fileName: string,
+  /** File it straight into a folder on the way in (Documents upload does this). */
+  folderId?: string | null,
 ): Promise<{ id: string; filePath: string; displayName: string }> {
   const displayName = await resolveUniqueFileName(userId, fileName);
   const response = await fetch(fileUri);
@@ -58,7 +60,13 @@ export async function uploadPropertyFile(
 
   const { data, error: dbError } = await supabase
     .from('files')
-    .insert({ user_id: userId, property_id: propertyId, file_path: filePath, file_name: displayName })
+    .insert({
+      user_id: userId,
+      property_id: propertyId,
+      file_path: filePath,
+      file_name: displayName,
+      folder_id: folderId ?? null,
+    })
     .select('id')
     .single();
   if (dbError) throw dbError;

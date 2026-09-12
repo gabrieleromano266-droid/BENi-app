@@ -74,7 +74,7 @@ export default function FileItem({ fileName, onOpen, onDelete, onMove, selected,
                 iconSize={18}
                 size={46}
                 onPress={onMove}
-                iconColor={colors.border}
+                iconColor={colors.warning}
                 style={{ backgroundColor: 'transparent', borderRadius: 0 }}
               />
             </>
@@ -85,7 +85,7 @@ export default function FileItem({ fileName, onOpen, onDelete, onMove, selected,
             iconSize={18}
             size={46}
             onPress={onDelete}
-            iconColor={colors.border}
+            iconColor={colors.danger}
             style={{ backgroundColor: 'transparent', borderRadius: 0 }}
           />
         </>

@@ -5,6 +5,8 @@ import { useEffect, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Button from '@/components/Button';
 import InfoPopup from '@/components/InfoPopup';
+import { SINGLE_PROPERTY_MODE } from '@/constants/app';
+import { fetchProperties } from '@/services/propertyService';
 import { FileUploadZone } from './FileUploadZone';
 import { MultiLineInput } from '@/components/Inputs';
 import { LoadingModal } from '@/components/LoadingModal';
@@ -39,6 +41,16 @@ export default function UploadExtractPopup({ visible, userId, onClose, onSuccess
   const [error, setError] = useState<string | null>(null);
 
   const isDisabled = uploading || extracting || !selectedFile || !selectedProperty;
+
+  // Single-property MVP: there is exactly one home, so select it rather than
+  // asking. Without this the upload button would stay disabled forever — it
+  // requires a property, and the chooser is now hidden.
+  useEffect(() => {
+    if (!visible || !SINGLE_PROPERTY_MODE || !userId || selectedProperty) return;
+    fetchProperties(userId)
+      .then((props) => { if (props.length > 0) setSelectedProperty(props[0].id); })
+      .catch((err) => console.error('Could not load the property:', err));
+  }, [visible, userId, selectedProperty]);
 
   useEffect(() => {
     setExtracting(false);
@@ -129,15 +141,23 @@ export default function UploadExtractPopup({ visible, userId, onClose, onSuccess
             <FileUploadZone
               onPickFile={pickFile}
               onClearFile={() => { setFileName(undefined); setSelectedFile(null); }}
+              onDropFile={(f) => {
+                setFileName(f.name);
+                setSelectedFile(f as unknown as PickedFile);
+              }}
               uploading={uploading}
               fileName={fileName}
             />
 
-            <PropertyDropdown
-              userId={userId}
-              selectedProperty={selectedProperty}
-              onSelect={setSelectedProperty}
-            />
+            {/* With one home per account there is nothing to choose — the
+                property is selected automatically in the effect above. */}
+            {!SINGLE_PROPERTY_MODE && (
+              <PropertyDropdown
+                userId={userId}
+                selectedProperty={selectedProperty}
+                onSelect={setSelectedProperty}
+              />
+            )}
 
             <Text style={[styles.descLabel, { color: colors.textPrimary }]}>
               Document description:

@@ -9,6 +9,7 @@
  * The property filter still applies inside a folder, so a folder like
  * "Receipts" can span several properties and still be narrowed to one.
  */
+import { SINGLE_PROPERTY_MODE } from '@/constants/app';
 import Button from '@/components/Button';
 import ConfirmDeleteModal from '@/components/ConfirmDeleteModal';
 import EmptyText from '@/components/EmptyText';
@@ -20,7 +21,7 @@ import MoveToFolderModal from '@/components/MoveToFolderModal';
 import PageContainer from '@/components/PageContainer';
 import PageHeader from '@/components/PageHeader';
 import RenameModal from '@/components/RenameModal';
-import UploadExtractPopup from '@/components/upload/UploadExtractPopup';
+import UploadDocumentPopup from '@/components/upload/UploadDocumentPopup';
 import { supabase } from '@/services/supabase';
 import { deleteFiles, downloadFile, fetchFilesForProperty } from '@/services/fileService';
 import {
@@ -220,7 +221,7 @@ export default function DocumentsScreen() {
         </Pressable>
       )}
 
-      {!loading && properties.length > 0 && (
+      {!SINGLE_PROPERTY_MODE && !loading && properties.length > 0 && (
         <FilterChips
           options={[
             { label: 'All', value: null },
@@ -266,11 +267,20 @@ export default function DocumentsScreen() {
         </>
       )}
 
-      <UploadExtractPopup
+      {/* Documents get a plain upload with a folder picker — no AI, no cost.
+          Inspection reports still go through Upload Report in the sidebar,
+          which is the flow that extracts tasks. */}
+      <UploadDocumentPopup
         visible={uploadVisible}
         userId={userId ?? ''}
+        propertyId={propertyFilter ?? properties[0]?.id ?? null}
+        folders={folders}
+        initialFolderId={openFolderId}
         onClose={() => setUploadVisible(false)}
-        onSuccess={() => { if (userId) loadDocuments(userId); }}
+        onUploaded={() => { if (userId) loadDocuments(userId); setSuccessMessage('Document added'); }}
+        onFolderCreated={(folder) =>
+          setFolders((prev) => [...prev, folder].sort((a, b) => a.name.localeCompare(b.name)))
+        }
       />
 
       <RenameModal

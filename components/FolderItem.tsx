@@ -40,7 +40,7 @@ export default function FolderItem({ name, count, onOpen, onRename, onDelete }: 
         iconSize={18}
         size={44}
         onPress={onRename}
-        iconColor={colors.border}
+        iconColor={colors.info}
         style={{ backgroundColor: 'transparent', borderRadius: 0 }}
       />
       <IconButton
@@ -48,7 +48,7 @@ export default function FolderItem({ name, count, onOpen, onRename, onDelete }: 
         iconSize={18}
         size={44}
         onPress={onDelete}
-        iconColor={colors.border}
+        iconColor={colors.danger}
         style={{ backgroundColor: 'transparent', borderRadius: 0 }}
       />
     </View>
