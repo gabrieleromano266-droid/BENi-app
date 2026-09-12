@@ -71,6 +71,17 @@ export default function RegisterScreen() {
       return;
     }
 
+    // With email confirmation off, signUp already returns a session — so send
+    // them straight into the app. Telling someone to "check your email" when no
+    // email is coming is a dead end, and bouncing an already-signed-in user to
+    // the login screen just makes them type their password again.
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (sessionData.session) {
+      showPopup('success', 'Welcome to BENi', 'Your account is ready.');
+      setTimeout(() => router.replace('/(tabs)/dashboard'), 1200);
+      return;
+    }
+
     showPopup('success', 'Account Created', 'Please check your email to confirm your account.');
     setTimeout(() => router.replace('/(auth)/login'), 3000);
   };

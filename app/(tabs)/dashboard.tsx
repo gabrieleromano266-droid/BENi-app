@@ -161,6 +161,7 @@ export default function DashboardScreen() {
   // The recurring bank is seeded but does nothing until a property opts into
   // features. Until then "Recurring" reads 0 and BENi looks like a one-off
   // report parser rather than something that keeps a home on schedule.
+  const hasNoProperty = !loadingProperties && properties.length === 0;
   const planProperty = selectedPropertyId ?? properties[0]?.id ?? null;
   const needsPlan = !loadingTasks && recurringCount === 0 && !!planProperty;
 
@@ -278,13 +279,36 @@ export default function DashboardScreen() {
                 </Text>
               </View>
             )}
-            {/* Adding a second home is out of scope for the MVP. */}
-            {!SINGLE_PROPERTY_MODE && (
+            {/* Adding a SECOND home is out of scope for the MVP — but adding
+                your FIRST is the whole on-ramp. Hiding this unconditionally
+                left a new account with no way to create a property at all. */}
+            {(!SINGLE_PROPERTY_MODE || properties.length === 0) && (
               <IconButton icon="add" onPress={() => setAddPropertyVisible(true)} size={30} />
             )}
           </View>
         }
       />
+
+      {hasNoProperty && (
+        <View style={[styles.planPrompt, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
+          <MaterialIcons name="add-home" size={22} color={colors.primary} />
+          <View style={styles.planText}>
+            <Text style={[styles.planTitle, { color: colors.textPrimary }]}>
+              Add your home to get started
+            </Text>
+            <Text style={[styles.planBody, { color: colors.textSecondary }]}>
+              Everything in BENi hangs off your home — your inspection report, your
+              maintenance plan, your documents. It takes about ten seconds.
+            </Text>
+          </View>
+          <Button
+            title="Add home"
+            variant="primary"
+            size="sm"
+            onPress={() => setAddPropertyVisible(true)}
+          />
+        </View>
+      )}
 
       {needsPlan && (
         <View style={[styles.planPrompt, { backgroundColor: colors.infoLight, borderColor: colors.info }]}>
@@ -357,7 +381,11 @@ export default function DashboardScreen() {
             <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 12 }} />
           ) : displayedTasks.length === 0 ? (
             <EmptyText>
-              {scopedTasks.length === 0 ? 'No open maintenance items — nicely maintained.' : 'No items match the selected filters.'}
+              {hasNoProperty
+                ? 'Add your home above, then upload an inspection report to build your plan.'
+                : scopedTasks.length === 0
+                  ? 'No open maintenance items — nicely maintained.'
+                  : 'No items match the selected filters.'}
             </EmptyText>
           ) : (
             displayedTasks.map((task) => (
