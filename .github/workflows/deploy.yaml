@@ -18,9 +18,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 24 to match the npm that generated package-lock.json. On Node 20
+      # (npm 10) `npm ci` rejected the lockfile as missing packages, because a
+      # v12-generated lockfile is read differently by the older npm. GitHub has
+      # also deprecated Node 20 on runners.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - run: npm ci
 
