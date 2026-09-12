@@ -11,6 +11,7 @@
  * which folder does this go in?
  */
 import Button from '@/components/Button';
+import { fileTooLargeMessage, formatBytes, MAX_UPLOAD_BYTES } from '@/constants/app';
 import Dropdown from '@/components/Dropdown';
 import InfoPopup from '@/components/InfoPopup';
 import { LoadingModal } from '@/components/LoadingModal';
@@ -72,6 +73,8 @@ export default function UploadDocumentPopup({
     });
     if (result.canceled) return;
     const picked = result.assets[0];
+    const tooBig = fileTooLargeMessage(picked.size);
+    if (tooBig) { setError(tooBig); return; }
     setFile({ name: picked.name, uri: picked.uri, mimeType: picked.mimeType, size: picked.size });
   };
 
@@ -121,8 +124,12 @@ export default function UploadDocumentPopup({
                 fileName={file?.name}
                 onPickFile={pickFile}
                 onClearFile={() => setFile(null)}
-                onDropFile={setFile}
-                hint="PDF, image, or document"
+                onDropFile={(f) => {
+                  const tooBig = fileTooLargeMessage(f.size);
+                  if (tooBig) { setError(tooBig); return; }
+                  setFile(f);
+                }}
+                hint={`PDF, image, or document — up to ${formatBytes(MAX_UPLOAD_BYTES)}`}
                 label="Document"
               />
 

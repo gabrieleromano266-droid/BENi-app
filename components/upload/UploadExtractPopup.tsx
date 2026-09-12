@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Button from '@/components/Button';
 import InfoPopup from '@/components/InfoPopup';
-import { SINGLE_PROPERTY_MODE } from '@/constants/app';
+import { fileTooLargeMessage, formatBytes, MAX_UPLOAD_BYTES, SINGLE_PROPERTY_MODE } from '@/constants/app';
 import { fetchProperties } from '@/services/propertyService';
 import { FileUploadZone } from './FileUploadZone';
 import { MultiLineInput } from '@/components/Inputs';
@@ -67,6 +67,8 @@ export default function UploadExtractPopup({ visible, userId, onClose, onSuccess
     });
     if (result.canceled) return;
     const file = result.assets[0];
+    const tooBig = fileTooLargeMessage(file.size);
+    if (tooBig) { setError(tooBig); return; }
     setFileName(file.name);
     setSelectedFile(file);
   };
@@ -142,9 +144,12 @@ export default function UploadExtractPopup({ visible, userId, onClose, onSuccess
               onPickFile={pickFile}
               onClearFile={() => { setFileName(undefined); setSelectedFile(null); }}
               onDropFile={(f) => {
+                const tooBig = fileTooLargeMessage(f.size);
+                if (tooBig) { setError(tooBig); return; }
                 setFileName(f.name);
                 setSelectedFile(f as unknown as PickedFile);
               }}
+              hint={`.pdf or .txt — up to ${formatBytes(MAX_UPLOAD_BYTES)}`}
               uploading={uploading}
               fileName={fileName}
             />
