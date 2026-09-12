@@ -1,6 +1,8 @@
 import AddTaskModal from '@/components/AddTaskModal';
 import Card from '@/components/Card';
+import Button from '@/components/Button';
 import { SINGLE_PROPERTY_MODE } from '@/constants/app';
+import { setupRecurringPlan } from '@/services/featureService';
 import CompleteTaskModal, { CompleteResult } from '@/components/CompleteTaskModal';
 import ConfirmDeleteModal from '@/components/ConfirmDeleteModal';
 import AddPropertyPopup from '@/components/dashboard/AddPropertyPopup';
@@ -52,6 +54,7 @@ export default function DashboardScreen() {
   const [loadingProperties, setLoadingProperties] = useState(true);
   const [loadingTasks, setLoadingTasks] = useState(true);
   const [completedCount, setCompletedCount] = useState(0);
+  const [settingUpPlan, setSettingUpPlan] = useState(false);
 
   /** null = "All Properties" */
   const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
@@ -155,6 +158,29 @@ export default function DashboardScreen() {
   const recurringCount = scopedTasks.filter((t) => !!t.recur_frequency).length;
   const unassignedCount = scopedTasks.filter((t) => !t.system).length;
 
+  // The recurring bank is seeded but does nothing until a property opts into
+  // features. Until then "Recurring" reads 0 and BENi looks like a one-off
+  // report parser rather than something that keeps a home on schedule.
+  const planProperty = selectedPropertyId ?? properties[0]?.id ?? null;
+  const needsPlan = !loadingTasks && recurringCount === 0 && !!planProperty;
+
+  const handleSetupPlan = async () => {
+    if (!planProperty || !userId) return;
+    setSettingUpPlan(true);
+    try {
+      const created = await setupRecurringPlan(planProperty, userId);
+      await loadTasks(userId);
+      setSuccessMessage(
+        created > 0
+          ? `Added ${created} recurring job${created === 1 ? '' : 's'} to your plan`
+          : 'Your recurring plan was already set up',
+      );
+    } catch (err) {
+      console.error('Could not set up the recurring plan:', err);
+    }
+    setSettingUpPlan(false);
+  };
+
   // Tapping a stat tile toggles that filter (re-tapping the active one clears it)
   const toggleSeverity = (key: string) =>
     setSeverityFilter((prev) => {
@@ -252,6 +278,28 @@ export default function DashboardScreen() {
           </View>
         }
       />
+
+      {needsPlan && (
+        <View style={[styles.planPrompt, { backgroundColor: colors.infoLight, borderColor: colors.info }]}>
+          <MaterialIcons name="event-repeat" size={22} color={colors.info} />
+          <View style={styles.planText}>
+            <Text style={[styles.planTitle, { color: colors.textPrimary }]}>
+              Set up your recurring maintenance
+            </Text>
+            <Text style={[styles.planBody, { color: colors.textSecondary }]}>
+              An inspection report tells you what is wrong today. Recurring jobs — furnace
+              filters, gutters, smoke alarms — are what stop the next report being bad.
+            </Text>
+          </View>
+          <Button
+            title={settingUpPlan ? 'Setting up…' : 'Set up'}
+            variant="primary"
+            size="sm"
+            disabled={settingUpPlan}
+            onPress={handleSetupPlan}
+          />
+        </View>
+      )}
 
       {/* Stats — each tile also acts as a quick filter for the plan below */}
       <View style={styles.statsRow}>
@@ -482,6 +530,28 @@ const styles = StyleSheet.create({
   },
   healthCol: {
     width: 320,
+  },
+  planPrompt: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    padding: spacing.lg,
+    marginBottom: spacing.lg,
+  },
+  planText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  planTitle: {
+    fontSize: fontSize.md,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  planBody: {
+    fontSize: fontSize.sm,
+    lineHeight: 18,
   },
   disclaimer: {
     fontSize: fontSize.xs,
