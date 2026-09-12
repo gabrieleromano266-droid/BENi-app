@@ -1146,6 +1146,27 @@ Deno.serve(async (req: Request) => {
       .select('title, recur_frequency, recur_interval');
     const adopted = adoptCadence(tasks, bankRows ?? []);
     if (adopted > 0) console.log(`Gave ${adopted} routine finding(s) a real cadence from the bank.`);
+
+    // Fold this report into the shared library. Nothing reads it yet — the
+    // point is that it fills itself on every upload, so the statistics exist
+    // by the time there are enough reports for them to mean something. The
+    // one that matters is distinct_reports: a finding that shows up in most
+    // reports is the inspector's boilerplate, not a defect at this house.
+    try {
+      const seen = tasks.map((t) => ({
+        key: [...titleTokens(t.title || '')].sort().join(' '),
+        title: t.title,
+        kind: t.taskKind,
+        system: t.system,
+        severity: t.severity,
+      })).filter((f) => f.key.length > 0);
+      const { error: libError } = await supabase.rpc('record_findings', { findings: seen });
+      if (libError) console.error('finding_library update failed (continuing):', libError.message);
+      else console.log(`Recorded ${seen.length} finding(s) in the library.`);
+    } catch (err) {
+      // Never fail an upload because bookkeeping failed.
+      console.error('finding_library update threw (continuing):', (err as Error).message);
+    }
     const matched = tasks.filter((t) => t.catalogId).length;
     const paged = tasks.filter((t) => t.sourcePage).length;
     const kinds = tasks.reduce((acc: Record<string, number>, t) => {

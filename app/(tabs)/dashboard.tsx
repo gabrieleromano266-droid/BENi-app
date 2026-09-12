@@ -3,6 +3,7 @@ import Card from '@/components/Card';
 import Button from '@/components/Button';
 import { SINGLE_PROPERTY_MODE } from '@/constants/app';
 import { setupRecurringPlan } from '@/services/featureService';
+import { recordTaskEvent, recordTaskEvents } from '@/services/learningService';
 import CompleteTaskModal, { CompleteResult } from '@/components/CompleteTaskModal';
 import ConfirmDeleteModal from '@/components/ConfirmDeleteModal';
 import AddPropertyPopup from '@/components/dashboard/AddPropertyPopup';
@@ -147,6 +148,7 @@ export default function DashboardScreen() {
       const propertyName = nextTask.property_id ? (properties.find((p) => p.id === nextTask.property_id)?.name || '') : '';
       return sortByDueDate([...without, { ...nextTask, propertyName, fileName: '' }]);
     });
+    if (userId) await recordTaskEvent(userId, completingTask, 'completed');
     setCompletedTasks((prev) => [
       { ...completingTask, completed_at: new Date().toISOString(), propertyName: '', fileName: '' },
       ...prev,
@@ -159,6 +161,14 @@ export default function DashboardScreen() {
   const handleDeleteTasksConfirm = async () => {
     const count = pendingDeleteTaskIds.length;
     setDeleteLoading(true);
+
+    // Record BEFORE deleting — afterwards the rows are gone and with them any
+    // chance of learning why the extraction was wrong.
+    if (userId) {
+      const doomed = allTasks.filter((t) => pendingDeleteTaskIds.includes(t.id));
+      await recordTaskEvents(userId, doomed, 'deleted');
+    }
+
     await deleteTasks(pendingDeleteTaskIds);
     setAllTasks((prev) => prev.filter((t) => !pendingDeleteTaskIds.includes(t.id)));
     setPendingDeleteTaskIds([]);
