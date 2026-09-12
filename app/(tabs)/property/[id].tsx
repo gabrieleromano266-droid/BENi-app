@@ -239,6 +239,12 @@ export default function PropertyDetailScreen() {
               }
             />
 
+            {/* These pills are LABELS, not filters. They look like the filter
+                chips used elsewhere, which made people tap them and conclude
+                the filter was broken. The heading says what they are. */}
+            <Text style={[styles.featuresHeading, { color: colors.textMuted }]}>
+              What your home has — tap the sliders to change
+            </Text>
             <View style={styles.featuresRow}>
               <View style={styles.featureChips}>
                 {enabledFeatureIds.size === 0 ? (
@@ -423,6 +429,13 @@ const styles = StyleSheet.create({
   maxWidth: {
     width: '100%',
     maxWidth: PAGE_MAX_WIDTH,
+  },
+  featuresHeading: {
+    fontSize: fontSize.xs,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    fontWeight: '700',
+    marginBottom: 6,
   },
   featuresRow: {
     flexDirection: 'row',
