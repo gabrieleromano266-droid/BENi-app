@@ -12,15 +12,38 @@ export async function fetchProperties(userId: string): Promise<Property[]> {
 }
 
 /** Create a new property for the current authenticated user */
-export async function createProperty(name: string): Promise<void> {
+export type NewPropertyDetails = {
+  address?: string | null;
+  yearBuilt?: number | null;
+  lastInspectionDate?: string | null;
+};
+
+/**
+ * Create a home. Returns its id so onboarding can go straight on to uploading
+ * the inspection report against it, instead of dropping the user back on a
+ * dashboard and hoping they work out the next step.
+ */
+export async function createProperty(
+  name: string,
+  details: NewPropertyDetails = {},
+): Promise<string> {
   const { data: authData } = await supabase.auth.getUser();
   const userId = authData.user?.id;
   if (!userId) throw new Error('Not authenticated');
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('properties')
-    .insert([{ name: name.trim(), user_id: userId }]);
+    .insert([{
+      name: name.trim(),
+      user_id: userId,
+      address: details.address?.trim() || null,
+      year_built: details.yearBuilt ?? null,
+      last_inspection_date: details.lastInspectionDate || null,
+    }])
+    .select('id')
+    .single();
   if (error) throw error;
+  return data.id as string;
 }
 
 /** Rename a property */

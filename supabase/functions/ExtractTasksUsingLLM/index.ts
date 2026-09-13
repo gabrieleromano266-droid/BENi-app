@@ -56,6 +56,8 @@ type ExtractedTask = {
   taskKind: string | null;
   /** Came from the inspector's summary section — see findSummaryRange(). */
   fromSummary: boolean;
+  /** Why this is a safety matter, when it is one — see safetyReason(). */
+  safetyReason?: string | null;
 };
 
 // Section headings used by the target inspection format. Findings live under
@@ -627,26 +629,59 @@ async function extractFindings(report: PreparedReport, description: string): Pro
   return merged;
 }
 
-/** STAGE 2: one focused call that only assigns catalog ids. */
+/**
+ * Findings per matching call.
+ *
+ * Measured: matching all ~80 findings in ONE call took 10.7s of a 28s
+ * extraction — 38% of the total, and the only serial LLM step left (stage 1 is
+ * already parallel). The model has to read the whole catalog and emit every
+ * match before a single token is useful to us.
+ *
+ * Splitting into batches lets them run at the same time. The catalog is
+ * repeated in each prompt, so this costs more input tokens — roughly a tenth
+ * of a cent per report — in exchange for seconds off the wait on every single
+ * upload. Worth it: the user is sitting watching a spinner.
+ *
+ * 25 keeps each batch's output clear of the token limit while needing only
+ * three or four calls for a typical report.
+ */
+const MATCH_BATCH_SIZE = 25;
+
 async function matchFindings(tasks: ExtractedTask[], catalogText: string): Promise<void> {
   if (tasks.length === 0 || !catalogText) return;
-  const list = tasks
-    .map((t, i) => `${i}. ${t.title} - ${t.issue ?? ''} [${t.system ?? 'unknown'}]`)
-    .join('\n');
-  try {
-    const res = await chatJSON(buildMatchPrompt(catalogText), list, 'match');
-    const matches = Array.isArray((res as { matches?: unknown }).matches)
-      ? ((res as { matches: { index?: number; catalogId?: string | null }[] }).matches)
-      : [];
-    for (const m of matches) {
-      const i = Number(m?.index);
-      if (Number.isInteger(i) && i >= 0 && i < tasks.length) {
-        tasks[i].catalogId = m?.catalogId ?? null;
-      }
-    }
-  } catch (err) {
-    console.error(`Catalog matching failed (continuing unmatched): ${(err as Error).message}`);
+
+  const batches: { offset: number; items: ExtractedTask[] }[] = [];
+  for (let i = 0; i < tasks.length; i += MATCH_BATCH_SIZE) {
+    batches.push({ offset: i, items: tasks.slice(i, i + MATCH_BATCH_SIZE) });
   }
+
+  await Promise.all(batches.map(async (batch, b) => {
+    // Indices are LOCAL to each batch in the prompt and resolved back against
+    // that batch here. Asking the model to work with global offsets is a
+    // needless chance for it to drift, and a drifted index silently attaches
+    // the wrong price to the wrong finding.
+    const list = batch.items
+      .map((t, i) => `${i}. ${t.title} - ${t.issue ?? ''} [${t.system ?? 'unknown'}]`)
+      .join('\n');
+    try {
+      const res = await chatJSON(
+        buildMatchPrompt(catalogText), list, `match ${b + 1}/${batches.length}`,
+      );
+      const matches = Array.isArray((res as { matches?: unknown }).matches)
+        ? ((res as { matches: { index?: number; catalogId?: string | null }[] }).matches)
+        : [];
+      for (const m of matches) {
+        const i = Number(m?.index);
+        if (Number.isInteger(i) && i >= 0 && i < batch.items.length) {
+          batch.items[i].catalogId = m?.catalogId ?? null;
+        }
+      }
+    } catch (err) {
+      // One failed batch leaves only its own findings unmatched; the rest
+      // still get their real Calgary costs.
+      console.error(`Catalog matching batch ${b + 1} failed: ${(err as Error).message}`);
+    }
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -900,6 +935,80 @@ function adoptCadence(
 }
 
 /**
+ * Some findings are critical because of what they ARE, not how urgent the
+ * catalog says the repair is.
+ *
+ * The catalog derives severity from a repair's urgency window, which is the
+ * right default but gets one class of finding badly wrong. A missing deck
+ * handrail is not urgent in the sense of "the wood is deteriorating" — it is
+ * urgent in the sense of "someone falls off the deck". Only 19 of 224 catalog
+ * entries came out critical, and the first real user (a homeowner, not a
+ * developer) immediately said leaks, electrical faults and safety hazards
+ * should outrank cosmetic work.
+ *
+ * So: a deterministic override on top of the probabilistic result, the same
+ * pattern as the 5x cost guard and the system keyword fallback. Three things
+ * make a finding critical no matter what anything else concluded:
+ *
+ *   1. it can hurt somebody          (gas, CO, shock, fire, falls)
+ *   2. water is actively getting in  (damage compounds every day it waits)
+ *   3. the structure is moving       (cheap now, structural engineer later)
+ *
+ * The override only ever RAISES severity. It never demotes, because the
+ * catalog and the model both have information this does not.
+ */
+const SAFETY_CRITICAL: [RegExp, string][] = [
+  // Can hurt somebody
+  [/\b(gas leak|smell of gas|natural gas leak|propane leak)\b/i, 'gas'],
+  [/\b(carbon monoxide|co alarm|co detector)\b.*\b(missing|absent|none|not present|inoperative|expired)\b/i, 'CO'],
+  [/\b(missing|no|absent|inoperative|expired)\b.*\b(smoke alarm|smoke detector|carbon monoxide)\b/i, 'alarms'],
+  [/\b(exposed|open|live|energi[sz]ed)\b.*\b(wir|conductor|splice|junction|knockout|bus bar)/i, 'exposed wiring'],
+  [/\b(double[- ]?tap|double[- ]?lug|federal pacific|stab[- ]?lok|zinsco|aluminum wiring|knob and tube)\b/i, 'panel hazard'],
+  [/\b(scorch|burn(ed|t)? mark|arc(ing)?|melted|overheat)/i, 'electrical heat'],
+  [/\b(missing|no|absent|loose|inadequate)\b.*\b(handrail|guardrail|guard rail|railing|baluster)\b/i, 'fall hazard'],
+  [/\b(trip hazard|fall hazard|safety hazard|fire hazard|shock hazard|electrocution)\b/i, 'stated hazard'],
+  [/\bgfci\b.*\b(missing|absent|not present|required|no protection)\b/i, 'GFCI'],
+  [/\b(cracked|failed|compromised)\b.*\b(heat exchanger|flue|chimney liner|vent connector)\b/i, 'combustion'],
+  [/\b(back ?draft|spillage|improper venting|disconnected vent)\b/i, 'venting'],
+  [/\b(garage door)\b.*\b(sensor|reverse|safety)\b.*\b(missing|not working|inoperative|fail)/i, 'door safety'],
+
+  // Water actively getting in — the damage compounds daily
+  [/\b(active|ongoing|current)\b.*\bleak/i, 'active leak'],
+  [/\b(water (entry|entering|penetration|intrusion|ingress))\b/i, 'water intrusion'],
+  [/\b(sewer backup|sewage|raw sewage)\b/i, 'sewage'],
+  [/\b(mould|mold)\b.*\b(growth|visible|extensive|present)\b/i, 'mould'],
+  // Must be a pipe that HAS burst, not advice about preventing one — the
+  // looser version matched "check the main water shut-off valve".
+  [/\b(pipe|line|hose)\b[^.]{0,30}\b(has |had |is )?(burst|split open|ruptured)\b/i, 'burst pipe'],
+
+  // Structure moving
+  [/\b(bowing|buckling|heaving|settling|shifting|displaced)\b.*\b(wall|foundation|beam|joist|footing)\b/i, 'movement'],
+  [/\b(structural)\b.*\b(concern|defect|failure|damage|deficien)/i, 'structural'],
+  // Rot only counts when it is in something holding weight up. "Deteriorated"
+  // on its own appears in nearly every inspection report — fences, siding,
+  // thresholds — and matching it produced 29 of 36 safety hits in testing,
+  // which would have flooded the critical list with cosmetic work and taught
+  // people to ignore the label entirely.
+  [/\b(rot|rotten|rotting)\b[^.]{0,40}\b(joist|beam|post|column|ledger|sill|stair|step|deck(ing)?|structur|support|framing|truss|rafter)\b/i, 'structural rot'],
+  [/\b(joist|beam|post|column|ledger|sill|stair|step|deck(ing)?|support|framing|truss|rafter)\b[^.]{0,40}\b(rot|rotten|rotting)\b/i, 'structural rot'],
+];
+
+/**
+ * Returns the reason this finding is a safety matter, or null.
+ * Matches on the full text, not just the title — inspectors put the dangerous
+ * part in the description more often than in the heading.
+ */
+function safetyReason(task: ExtractedTask): string | null {
+  const text = [task.title, task.issue, task.fixRecommendation, task.location]
+    .filter(Boolean)
+    .join(' ');
+  for (const [rx, label] of SAFETY_CRITICAL) {
+    if (rx.test(text)) return label;
+  }
+  return null;
+}
+
+/**
  * Only real jobs get a deadline.
  *
  * A due date on "replace the filters routinely" or "obtain your warranties" is
@@ -943,6 +1052,18 @@ function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogR
 
       // Never leave a task uncategorised - it would vanish from the score.
       if (!base.system) base.system = inferSystem(t);
+
+      // Safety overrides urgency. The catalog rates a missing deck handrail by
+      // how fast the wood is deteriorating; a homeowner rates it by whether
+      // someone falls off the deck. Only ever raises, never demotes.
+      const hazard = safetyReason(base);
+      if (hazard && base.severity !== 'critical') {
+        console.log(`Raised "${base.title}" to critical (${hazard}).`);
+        base.severity = 'critical';
+        base.safetyReason = hazard;
+      } else if (hazard) {
+        base.safetyReason = hazard;
+      }
 
       if (!match) {
         base.dueDate = undated(base, deriveDueDate(base, null));
@@ -1176,6 +1297,10 @@ Deno.serve(async (req: Request) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
+    const t0 = Date.now();
+    const mark = (label: string, since: number) =>
+      console.log(`TIMING ${label}: ${Date.now() - since}ms`);
+
     const { data: fileBlob, error: downloadError } = await supabase.storage
       .from('user_files')
       .download(filePath);
@@ -1216,9 +1341,12 @@ Deno.serve(async (req: Request) => {
       .map((r) => `${r.id} | ${r.system} | ${r.component} | ${r.defect} | $${r.cost_typical ?? '?'}`)
       .join('\n');
 
+    mark('download+catalog', t0);
+    const tPdf = Date.now();
     const pdfBytes = new Uint8Array(await fileBlob.arrayBuffer());
     const rawPages = await extractPdfPages(pdfBytes);
     const report = preparePdfText(rawPages);
+    mark('pdf parse', tPdf);
     const { rawChars, finalChars } = report;
 
     console.log(
@@ -1233,8 +1361,13 @@ Deno.serve(async (req: Request) => {
     }
 
     // Stage 1: find everything. Stage 2: label it against the catalog.
+    const tExtract = Date.now();
     const findings = await extractFindings(report, description);
+    mark('stage1 extract (parallel LLM)', tExtract);
+
+    const tMatch = Date.now();
     await matchFindings(findings, catalogText);
+    mark('stage2 catalog match (single LLM)', tMatch);
     const deduped = mergeSameCatalogEntry(findings);
     const tasks = sanitizeAndEnrich(deduped, catalog);
 
@@ -1280,6 +1413,7 @@ Deno.serve(async (req: Request) => {
       `catalog_size=${catalog.size}`,
     );
 
+    mark('TOTAL', t0);
     return new Response(JSON.stringify({ tasks }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

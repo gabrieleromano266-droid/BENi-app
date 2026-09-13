@@ -1,6 +1,7 @@
 import AddTaskModal from '@/components/AddTaskModal';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
+import OnboardingFlow from '@/components/onboarding/OnboardingFlow';
 import { SINGLE_PROPERTY_MODE } from '@/constants/app';
 import { setupRecurringPlan } from '@/services/featureService';
 import { recordTaskEvent, recordTaskEvents } from '@/services/learningService';
@@ -57,6 +58,13 @@ export default function DashboardScreen() {
   const [completedCount, setCompletedCount] = useState(0);
   const [settingUpPlan, setSettingUpPlan] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /**
+   * Onboarding runs once, for an account with no home yet. Dismissing it sets
+   * this so it does not reappear every time the dashboard re-renders — but it
+   * is not persisted, so someone who skips still gets offered it next visit,
+   * which is the right trade for a step they cannot use the app without.
+   */
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   /**
    * A report mixes real jobs with general upkeep advice and administrative
    * notes. Showing all three as one list is what made the plan 150+ items
@@ -332,7 +340,20 @@ export default function DashboardScreen() {
         }
       />
 
-      {hasNoProperty && (
+      <OnboardingFlow
+        visible={hasNoProperty && !onboardingDismissed && !!userId}
+        userId={userId ?? ''}
+        firstName={displayName || undefined}
+        onHomeAdded={() => { if (userId) { loadProperties(userId); loadTasks(userId); } }}
+        onDone={() => {
+          setOnboardingDismissed(true);
+          if (userId) { loadProperties(userId); loadTasks(userId); }
+        }}
+      />
+
+      {/* Shown only once onboarding has been dismissed, so someone who skipped
+          the wizard still has an obvious way back in. */}
+      {hasNoProperty && onboardingDismissed && (
         <View style={[styles.planPrompt, { backgroundColor: colors.primaryLight, borderColor: colors.primary }]}>
           <MaterialIcons name="add-home" size={22} color={colors.primary} />
           <View style={styles.planText}>
