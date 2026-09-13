@@ -28,6 +28,8 @@ export type ExtractedTask = {
   costConfidence: string | null;
   /** 'action' | 'routine' | 'note' — what kind of statement this was */
   taskKind: TaskKind | null;
+  /** Came from the inspector's summary section */
+  fromSummary: boolean;
 };
 
 /**

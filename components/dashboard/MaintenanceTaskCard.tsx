@@ -122,6 +122,14 @@ export default function MaintenanceTaskCard({ task, showProperty, onComplete, on
                 job the homeowner has somehow failed to do. Order of
                 preference: our own schedule, then the cadence borrowed from
                 the recurring bank, then a plain "Ongoing". */}
+            {task.from_summary && (
+              <View style={[styles.recurPill, { backgroundColor: colors.severityCriticalBg }]}>
+                <MaterialIcons name="push-pin" size={10} color={colors.severityCriticalText} />
+                <Text style={[styles.recurText, { color: colors.severityCriticalText }]}>
+                  In the summary
+                </Text>
+              </View>
+            )}
             {(!!task.recur_frequency || !!task.recurrence || task.task_kind === 'routine') && (
               <View style={[styles.recurPill, { backgroundColor: colors.infoLight }]}>
                 <MaterialIcons name="refresh" size={10} color={colors.info} />

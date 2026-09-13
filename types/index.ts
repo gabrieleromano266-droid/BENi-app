@@ -52,6 +52,8 @@ export type TaskType = {
   costConfidence?: string | null;
   /** 'action' (a job) | 'routine' (ongoing upkeep) | 'note' (informational) */
   taskKind?: TaskKind | null;
+  /** Came from the inspector's summary section — the part he chose to highlight */
+  fromSummary?: boolean | null;
 };
 
 /** Raw DB row from the tasks table */
@@ -80,6 +82,7 @@ export type DBTask = {
   source_page?: number | null;
   cost_confidence?: string | null;
   task_kind?: TaskKind | null;
+  from_summary?: boolean | null;
 };
 
 /** DBTask enriched with the property name (used on dashboard) */
