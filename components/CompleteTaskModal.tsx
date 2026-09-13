@@ -14,8 +14,14 @@ import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TouchableOpacity
 
 export type CompleteResult = {
   nextDueDate: Date | null;
-  /** Optional receipt / invoice / before-after photo captured at completion. */
-  proof?: { uri: string; name: string } | null;
+  /**
+   * Optional records captured at completion: receipts, invoices, before/after
+   * photos. A plural, because one job routinely produces several — a quote, an
+   * invoice, and a photo of the finished work — and a receipt is the ground
+   * truth that turns a "Medium confidence" cost estimate into a real Calgary
+   * price. Throwing away the second and third file throws away that evidence.
+   */
+  proofs?: { uri: string; name: string }[];
   newFrequency?: RecurFrequency | null;
   newAnchor?: RecurAnchor | null;
 };
@@ -30,22 +36,30 @@ type Props = {
 export default function CompleteTaskModal({ visible, task, onClose, onComplete }: Props) {
   // Proof of work: a receipt, invoice or before/after photo. Optional - never
   // block completing a task on having paperwork to hand.
-  const [proof, setProof] = useState<{ uri: string; name: string } | null>(null);
+  const [proofs, setProofs] = useState<{ uri: string; name: string }[]>([]);
 
   useEffect(() => {
-    if (!visible) setProof(null);
+    if (!visible) setProofs([]);
   }, [visible]);
 
   const pickProof = async () => {
     const result = await DocumentPicker.getDocumentAsync({
       type: ['application/pdf', 'image/*'],
       copyToCacheDirectory: true,
-      multiple: false,
+      multiple: true,
     });
     if (result.canceled) return;
-    const f = result.assets[0];
-    setProof({ uri: f.uri, name: f.name });
+    const picked = result.assets.map((f) => ({ uri: f.uri, name: f.name }));
+    // Append rather than replace, so several trips to the picker accumulate
+    // (phones often only let you choose from one album at a time).
+    setProofs((prev) => {
+      const seen = new Set(prev.map((p) => p.name));
+      return [...prev, ...picked.filter((p) => !seen.has(p.name))];
+    });
   };
+
+  const removeProof = (name: string) =>
+    setProofs((prev) => prev.filter((p) => p.name !== name));
 
   const { colors } = useTheme();
   const [clearRecur, setClearRecur] = useState(false);
@@ -85,7 +99,7 @@ export default function CompleteTaskModal({ visible, task, onClose, onComplete }
   const handleComplete = async (result: CompleteResult) => {
     setLoading(true);
     try {
-      await onComplete({ ...result, proof });
+      await onComplete({ ...result, proofs });
     } finally {
       setLoading(false);
     }
@@ -175,13 +189,32 @@ export default function CompleteTaskModal({ visible, task, onClose, onComplete }
               {/* Optional proof of work. Kept last so it never gets in the way of
                   simply ticking something off. */}
               <Text style={[styles.proofLabel, { color: colors.textMuted }]}>
-                Keep a record (optional) — receipt, invoice or a before/after photo
+                Keep a record (optional) — receipts, invoices, before/after photos.
+                You can add as many as you like.
               </Text>
+
+              {proofs.map((p) => (
+                <View key={p.name} style={[styles.proofRow, { borderColor: colors.borderLight }]}>
+                  <MaterialIcons name="attach-file" size={16} color={colors.textMuted} />
+                  <Text style={[styles.proofName, { color: colors.textPrimary }]} numberOfLines={1}>
+                    {p.name}
+                  </Text>
+                  <Pressable onPress={() => removeProof(p.name)} hitSlop={8}>
+                    <MaterialIcons name="close" size={16} color={colors.textMuted} />
+                  </Pressable>
+                </View>
+              ))}
+
               <FileUploadZone
                 onPickFile={pickProof}
-                onClearFile={() => setProof(null)}
+                onClearFile={() => setProofs([])}
+                onDropFile={(f) =>
+                  setProofs((prev) =>
+                    prev.some((p) => p.name === f.name) ? prev : [...prev, { uri: f.uri, name: f.name }])
+                }
                 uploading={false}
-                fileName={proof?.name}
+                hint="PDF or image — add as many as you need"
+                label={proofs.length > 0 ? `Add another (${proofs.length} attached)` : 'Record'}
               />
 
               <View style={styles.btnGroup}>
@@ -259,6 +292,20 @@ const styles = StyleSheet.create({
   },
   loader: {
     marginVertical: spacing.lg,
+  },
+  proofRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  proofName: {
+    flex: 1,
+    fontSize: fontSize.sm,
   },
   proofLabel: {
     fontSize: fontSize.sm,

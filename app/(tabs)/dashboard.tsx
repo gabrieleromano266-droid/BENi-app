@@ -133,13 +133,15 @@ export default function DashboardScreen() {
     const completedPropertyId = completingTask.property_id;
     const nextTask = await completeTask(completingTask, userId, result.nextDueDate, result.newFrequency, result.newAnchor);
 
-    // Store the receipt/photo against the task we just closed. Never let a
-    // failed upload lose the completion itself.
-    if (result.proof) {
+    // Store the receipts/photos against the task we just closed. Uploaded one
+    // at a time and each guarded on its own, so a single bad file cannot lose
+    // the others -- or the completion itself, which is what the user actually
+    // asked for.
+    for (const proof of result.proofs ?? []) {
       try {
-        await uploadTaskDocument(userId, completedId, completedPropertyId, result.proof.uri, result.proof.name);
+        await uploadTaskDocument(userId, completedId, completedPropertyId, proof.uri, proof.name);
       } catch (err) {
-        console.error('Could not attach the completion document:', err);
+        console.error(`Could not attach "${proof.name}":`, err);
       }
     }
     setAllTasks((prev) => {
