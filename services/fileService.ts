@@ -197,3 +197,18 @@ export async function downloadFile(filePath: string, fileName: string): Promise<
     await Sharing.shareAsync(localUri);
   }
 }
+
+/**
+ * Has this user uploaded any inspection report yet?
+ *
+ * Drives the "upload your report" nudge in the sidebar. A count query rather
+ * than fetching rows, because the answer is a single boolean and the sidebar
+ * renders on every screen.
+ */
+export async function hasAnyReport(userId: string): Promise<boolean> {
+  const { count } = await supabase
+    .from('files')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId);
+  return (count ?? 0) > 0;
+}

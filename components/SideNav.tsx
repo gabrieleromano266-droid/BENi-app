@@ -12,6 +12,7 @@ import IconButton from '@/components/IconButton';
 import NavIcon, { NavIconName, NavIconPressable } from '@/components/NavIcon';
 import UploadExtractPopup from '@/components/upload/UploadExtractPopup';
 import { supabase } from '@/services/supabase';
+import { hasAnyReport } from '@/services/fileService';
 import { useTheme } from '@/theme/ThemeContext';
 import { SIDEBAR_BREAKPOINT, SIDEBAR_WIDTH } from '@/theme/layout';
 import { fontSize, radius, spacing } from '@/theme/tokens';
@@ -55,12 +56,26 @@ export default function SideNav() {
   const [userId, setUserId] = useState<string | null>(null);
   const [email, setEmail] = useState('');
 
+  /**
+   * Until a report exists, Upload Report is the only thing the user should be
+   * doing — so it says so, instead of sitting there looking like any other
+   * menu item. Adding a home and then being left on an empty dashboard was
+   * exactly where the first real user got stuck.
+   */
+  const [needsReport, setNeedsReport] = useState(false);
+
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      setUserId(data.user?.id ?? null);
+      const id = data.user?.id ?? null;
+      setUserId(id);
       setEmail(data.user?.email ?? '');
+      if (id) {
+        hasAnyReport(id)
+          .then((has) => setNeedsReport(!has))
+          .catch(() => setNeedsReport(false));
+      }
     });
-  }, []);
+  }, [pathname]);
 
   // Close the drawer when the window grows past the breakpoint, so it isn't
   // left open the next time the window shrinks
@@ -128,6 +143,7 @@ export default function SideNav() {
           icon="upload"
           label="Upload Report"
           active={false}
+          highlight={needsReport}
           trigger={replays.upload ?? 0}
           onReplay={() => replay('upload')}
           onPress={() => { setUploadVisible(true); setDrawerOpen(false); }}
@@ -207,31 +223,38 @@ export default function SideNav() {
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function NavItem({
-  icon, label, active, onPress, trigger, onReplay,
+  icon, label, active, onPress, trigger, onReplay, highlight,
 }: {
   icon: NavIconName; label: string; active: boolean; onPress: () => void;
-  trigger: number; onReplay: () => void;
+  trigger: number; onReplay: () => void; highlight?: boolean;
 }) {
   const { colors } = useTheme();
   return (
     <NavIconPressable
       onPress={onPress}
       onReplay={onReplay}
-      style={[styles.navItem, { backgroundColor: active ? colors.headerActiveBg : 'transparent' }]}
+      style={[
+        styles.navItem,
+        { backgroundColor: active ? colors.headerActiveBg : 'transparent' },
+        highlight && { backgroundColor: colors.gold, borderWidth: 0 },
+      ]}
     >
       <NavIcon
         name={icon}
         size={18}
         trigger={trigger}
         active={active}
-        color={active ? colors.headerAccent : colors.headerTextMuted}
+        color={highlight ? colors.headerBg : active ? colors.headerAccent : colors.headerTextMuted}
       />
       <Text style={[styles.navItemText, {
-        color: active ? colors.headerAccent : colors.headerTextMuted,
-        fontWeight: active ? '600' : '500',
+        color: highlight ? colors.headerBg : active ? colors.headerAccent : colors.headerTextMuted,
+        fontWeight: highlight || active ? '700' : '500',
       }]}>
         {label}
       </Text>
+      {highlight && (
+        <View style={[styles.navDot, { backgroundColor: colors.headerBg }]} />
+      )}
     </NavIconPressable>
   );
 }
@@ -284,6 +307,11 @@ const styles = StyleSheet.create({
   },
   navItemText: {
     fontSize: fontSize.md,
+  },
+  navDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
   },
   footer: {
     borderTopWidth: 1,

@@ -117,7 +117,7 @@ export default function OnboardingFlow({
                     onChangeText={setAddress}
                   />
                   <SingleLineInput
-                    placeholderText="Call it something (optional — e.g. Home)"
+                    placeholderText="Nickname (optional — e.g. Primary Home)"
                     value={name}
                     onChangeText={setName}
                   />
@@ -134,8 +134,8 @@ export default function OnboardingFlow({
                   />
 
                   <Text style={[styles.hint, { color: colors.textMuted }]}>
-                    The year helps BENi judge how much life is left in the furnace, roof
-                    and water heater.
+                    Knowing your home's age helps BENi be more accurate about when major
+                    equipment is likely to need attention.
                   </Text>
 
                   <Button

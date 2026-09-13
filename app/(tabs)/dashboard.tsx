@@ -2,6 +2,7 @@ import AddTaskModal from '@/components/AddTaskModal';
 import Card from '@/components/Card';
 import Button from '@/components/Button';
 import OnboardingFlow from '@/components/onboarding/OnboardingFlow';
+import UploadExtractPopup from '@/components/upload/UploadExtractPopup';
 import { SINGLE_PROPERTY_MODE } from '@/constants/app';
 import { setupRecurringPlan } from '@/services/featureService';
 import { recordTaskEvent, recordTaskEvents } from '@/services/learningService';
@@ -65,6 +66,7 @@ export default function DashboardScreen() {
    * which is the right trade for a step they cannot use the app without.
    */
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const [uploadVisible, setUploadVisible] = useState(false);
   /**
    * A report mixes real jobs with general upkeep advice and administrative
    * notes. Showing all three as one list is what made the plan 150+ items
@@ -374,6 +376,27 @@ export default function DashboardScreen() {
         </View>
       )}
 
+      {!hasNoProperty && !loadingTasks && allTasks.length === 0 && (
+        <View style={[styles.planPrompt, { backgroundColor: colors.gold, borderColor: colors.gold }]}>
+          <MaterialIcons name="upload-file" size={22} color={colors.headerBg} />
+          <View style={styles.planText}>
+            <Text style={[styles.planTitle, { color: colors.headerBg }]}>
+              Next: add your inspection report
+            </Text>
+            <Text style={[styles.planBody, { color: colors.headerBg }]}>
+              BENi reads it and builds your plan — every recommendation becomes a dated
+              task with a cost range, linked to the page it came from.
+            </Text>
+          </View>
+          <Button
+            title="Upload report"
+            variant="primary"
+            size="sm"
+            onPress={() => setUploadVisible(true)}
+          />
+        </View>
+      )}
+
       {needsPlan && (
         <View style={[styles.planPrompt, { backgroundColor: colors.infoLight, borderColor: colors.info }]}>
           <MaterialIcons name="event-repeat" size={22} color={colors.info} />
@@ -492,6 +515,17 @@ export default function DashboardScreen() {
         always get a real estimate from a licensed professional before committing
         to any work.
       </Text>
+
+      <UploadExtractPopup
+        visible={uploadVisible}
+        userId={userId ?? ''}
+        initialPropertyId={planProperty ?? undefined}
+        onClose={() => setUploadVisible(false)}
+        onSuccess={() => {
+          setUploadVisible(false);
+          if (userId) loadTasks(userId);
+        }}
+      />
 
       <AddPropertyPopup
         visible={addPropertyVisible}
