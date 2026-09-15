@@ -39,11 +39,13 @@ export default function PageHeader({ title, subtitle, subtitleColor, left, right
       <View style={styles.row}>
         {left}
         <View style={styles.textBlock}>
+          {/* "Welcome home, Gabriele" was being truncated on a phone. Shrinking
+              it to fit made it small and still tight, so on narrow screens it
+              wraps to a second line instead — a greeting with the user's name
+              in it is worth the extra row. */}
           <Text
-            style={[styles.title, { color: colors.textPrimary }]}
-            numberOfLines={1}
-            adjustsFontSizeToFit={narrow}
-            minimumFontScale={0.8}
+            style={[styles.title, narrow && styles.titleNarrow, { color: colors.textPrimary }]}
+            numberOfLines={narrow ? 2 : 1}
           >
             {title}
           </Text>
@@ -82,6 +84,10 @@ const styles = StyleSheet.create({
     fontFamily: fonts.heading,
     fontSize: fontSize.h2,
     fontWeight: 'bold',
+  },
+  titleNarrow: {
+    fontSize: fontSize.h3,
+    lineHeight: 26,
   },
   subtitle: {
     fontSize: fontSize.md,
