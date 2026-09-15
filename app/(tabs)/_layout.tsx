@@ -1,3 +1,4 @@
+import MobileNavFan from '@/components/MobileNavFan';
 import SideNav from '@/components/SideNav';
 import { supabase } from '@/services/supabase';
 import { useTheme } from '@/theme/ThemeContext';
@@ -37,6 +38,13 @@ export default function TabLayout() {
       <View style={{ flex: 1 }}>
         <Slot />
       </View>
+
+      {/* Mounted HERE rather than inside SideNav: on a phone SideNav's wrapper
+          is only as tall as the 56px top bar, and an absolutely-positioned
+          child resolves against its nearest positioned ancestor — so "bottom
+          right" came out as the bottom right of the HEADER. This root fills the
+          screen, which is what makes the fan sit where a thumb actually is. */}
+      {!isWide && <MobileNavFan />}
     </View>
   );
 }

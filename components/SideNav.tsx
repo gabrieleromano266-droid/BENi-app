@@ -10,7 +10,6 @@
  */
 import IconButton from '@/components/IconButton';
 import NavIcon, { NavIconName, NavIconPressable } from '@/components/NavIcon';
-import MobileNavFan, { FanItem } from '@/components/MobileNavFan';
 import UploadExtractPopup from '@/components/upload/UploadExtractPopup';
 import { supabase } from '@/services/supabase';
 import { hasAnyReport } from '@/services/fileService';
@@ -104,21 +103,6 @@ export default function SideNav() {
   // the one that actually reads against it — the navy mark is confirmed
   // near-invisible there (checked against both themes' headerBg).
   const logoSource = require('@/assets/images/beni-logo-cream.png');
-
-  /**
-   * The phone menu. Same destinations as the sidebar plus the two things that
-   * only lived in the sidebar footer — Profile and Sign Out — because on a
-   * phone there is no footer to put them in.
-   */
-  const mobileItems: FanItem[] = [
-    { key: 'dashboard', label: 'Dashboard', icon: 'space-dashboard', onPress: () => navigate('/(tabs)/dashboard') },
-    { key: 'properties', label: 'My Properties', icon: 'home-work', onPress: () => navigate('/(tabs)/properties') },
-    { key: 'documents', label: 'Documents', icon: 'description', onPress: () => navigate('/(tabs)/documents') },
-    { key: 'upload', label: 'Upload Report', icon: 'upload', highlight: needsReport,
-      onPress: () => { setUploadVisible(true); setDrawerOpen(false); } },
-    { key: 'profile', label: 'Profile', icon: 'person', onPress: () => navigate('/(tabs)/profile') },
-    { key: 'signout', label: 'Sign Out', icon: 'logout', onPress: handleSignOut },
-  ];
 
   const panel = (
     <View style={[styles.panel, { backgroundColor: colors.headerBg }]}>
@@ -214,11 +198,6 @@ export default function SideNav() {
             </TouchableOpacity>
           </View>
 
-          <MobileNavFan
-            open={drawerOpen}
-            onToggle={setDrawerOpen}
-            items={mobileItems}
-          />
         </View>
       )}
 
