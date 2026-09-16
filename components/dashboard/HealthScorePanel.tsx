@@ -27,6 +27,8 @@ type Props = {
   overall: number;
   bySystem: SystemScore[];
   startHere: { title: string; systemLabel: string } | null;
+  /** False while tasks are still loading - see the count-up effect below. */
+  ready?: boolean;
 };
 
 /** Per-system breakdown bar color (unchanged thresholds). */
@@ -43,21 +45,41 @@ function ringColor(score: number, colors: ReturnType<typeof useTheme>['colors'])
   return colors.danger;
 }
 
-export default function HealthScorePanel({ overall, bySystem, startHere }: Props) {
+export default function HealthScorePanel({ overall, bySystem, startHere, ready = true }: Props) {
   const { colors } = useTheme();
   const [expanded, setExpanded] = useState(false);
   const anim = useRef(new Animated.Value(0)).current;
   const [displayScore, setDisplayScore] = useState(0);
 
-  useEffect(() => {
-    Animated.timing(anim, {
-      toValue: overall,
-      duration: 900,
-      useNativeDriver: false,
-    }).start();
-    const id = anim.addListener(({ value }) => setDisplayScore(Math.round(value)));
-    return () => anim.removeListener(id);
-  }, [overall]);
+  const hasAnimated = useRef(false);
+
+  /**
+   * Wait for the tasks before animating.
+   *
+   * computeHealthScores on an EMPTY list returns 100 - every system starts at
+   * 100 and nothing has been deducted yet. So the ring used to count up to a
+   * triumphant 100 on first paint, then fall to the real score a moment later
+   * once the tasks arrived. It reads like the app changing its mind, about the
+   * one number the whole dashboard is built around.
+   *
+   * `ready` stays false until the tasks have loaded. The count-up then runs
+   * once, from zero to the real score. Later genuine changes (completing a
+   * task) animate from wherever the ring already was, and faster, because by
+   * then it is feedback rather than a reveal.
+   */
+  useEffect(() => {
+    if (!ready) return;
+
+    Animated.timing(anim, {
+      toValue: overall,
+      duration: hasAnimated.current ? 450 : 900,
+      useNativeDriver: false,
+    }).start();
+    hasAnimated.current = true;
+
+    const id = anim.addListener(({ value }) => setDisplayScore(Math.round(value)));
+    return () => anim.removeListener(id);
+  }, [overall, ready]);
 
   const strokeDashoffset = anim.interpolate({
     inputRange: [0, 100],

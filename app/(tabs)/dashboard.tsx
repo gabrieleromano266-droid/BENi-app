@@ -450,7 +450,7 @@ export default function DashboardScreen() {
       <View style={isWide && styles.columns}>
         {/* Home Health Score */}
         <View style={isWide && styles.healthCol}>
-          <HealthScorePanel overall={overall} bySystem={bySystem} startHere={startHere} />
+          <HealthScorePanel overall={overall} bySystem={bySystem} startHere={startHere} ready={!loadingTasks} />
         </View>
 
         {/* Maintenance plan */}
