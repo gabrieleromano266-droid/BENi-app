@@ -111,9 +111,13 @@ export default function LoginScreen() {
             Own your home,{'\n'}not just the keys.
           </Text>
           <View style={styles.proofs}>
-            <Proof icon="description" text="Reads your inspection report, page by page." />
-            <Proof icon="event-repeat" text="Builds a plan around the seasons, not a to-do list." />
-            <Proof icon="payments" text="Cost ranges from a local database, not a guess." />
+            {/* Only claims the product can already stand behind. The cost
+                line came out on 2026-11-16 at Gabriele's request — the
+                database is still being reviewed, and a promise on the front
+                door has to be true on the first day. */}
+            <Proof icon="description" text="Reads your inspection report and turns it into a plan." />
+            <Proof icon="event-repeat" text="Schedules the upkeep around Calgary's seasons." />
+            <Proof icon="folder" text="Keeps your reports and documents in one place." />
           </View>
           <Text style={[styles.brandFoot, { color: colors.headerTextMuted }]}>
             Made in Calgary

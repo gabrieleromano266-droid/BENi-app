@@ -128,14 +128,29 @@ export async function fetchAttentionTasks(userId: string): Promise<AttentionTask
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  return (data || []).map((task) => {
+  const tiered = (data || []).map((task) => {
     const days = Math.round(
       (new Date(task.due_date + 'T00:00:00').getTime() - today.getTime()) / 86400000,
     );
     const tier: AttentionTier =
       days < 0 ? 'overdue' : days <= 7 ? 'week' : days <= 14 ? 'two_weeks' : 'month';
-    return { ...task, tier };
-  }) as AttentionTask[];
+    return { ...task, tier, days };
+  });
+
+  // Within a tier, the dangerous thing comes first. Ordered by date alone,
+  // "Repair cracks in front steps" (minor) sat shoulder to shoulder with
+  // "garage foundation undermining" (critical) because they were flagged the
+  // same week — and with 49 overdue, whatever is at the top is all anyone
+  // reads (BENI-62).
+  const TIER_RANK: Record<AttentionTier, number> = { overdue: 0, week: 1, two_weeks: 2, month: 3 };
+  const SEV_RANK: Record<string, number> = { critical: 0, moderate: 1, minor: 2 };
+  tiered.sort((a, b) =>
+    TIER_RANK[a.tier] - TIER_RANK[b.tier]
+    || (SEV_RANK[a.severity ?? ''] ?? 3) - (SEV_RANK[b.severity ?? ''] ?? 3)
+    || a.days - b.days,
+  );
+
+  return tiered.map(({ days: _days, ...task }) => task) as AttentionTask[];
 }
 
 /** Fetch COMPLETED tasks (most recently completed first) for the "Completed" view. */

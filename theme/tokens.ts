@@ -65,8 +65,10 @@ export const fonts = {
   bodySemibold: 'Inter_600SemiBold',
   /** Headings / section titles */
   heading: 'Fraunces_600SemiBold',
-  /** Hero numbers — health score, stat values */
-  display: 'Fraunces_700Bold',
+  /** Hero numbers — health score, stat values. Inter, not Fraunces: a serif
+      "8" next to a serif "Critical" was one flourish too many (founder
+      review, 2026-11-16). Numbers should just be numbers. */
+  display: 'Inter_700Bold',
   /** The one line on a screen that talks to the person — greetings, briefings */
   voice: 'Fraunces_500Medium_Italic',
 } as const;
