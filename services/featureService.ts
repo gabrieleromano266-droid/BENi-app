@@ -82,6 +82,9 @@ export async function addFeatureToProperty(
         system: st.system ?? null,
         cost_min: st.cost_min ?? null,
         cost_max: st.cost_max ?? null,
+        // A plan job is routine by definition. Leaving this null made the
+        // dashboard file 27 scheduled jobs under "To do" (BENI-53).
+        task_kind: 'routine',
       })),
     )
     .select(TASK_FIELDS);

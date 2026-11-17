@@ -44,20 +44,31 @@ export const radius = {
 } as const;
 
 /**
- * Font families — matches the demo: Montserrat for headings + big numbers,
- * Inter for body. These names are the keys registered via useFonts() in
- * app/_layout.tsx. If the fonts fail to load, React Native falls back to the
- * system font at the same weight, so referencing these is always safe.
+ * Font families. Inter for body; Fraunces — the brand's editorial serif, the
+ * same one on BENi's social material — for anything that speaks.
+ *
+ * Why the switch from Montserrat (BENI-59): a geometric sans reads as
+ * "software product"; a soft serif reads as "someone wrote this to you".
+ * The whole brief for the app is that it should feel like a home, not a
+ * dashboard, and type is the cheapest place to make that true.
+ *
+ * These names are the keys registered via useFonts() in app/_layout.tsx. If
+ * a font fails to load, React Native falls back to the system font, so
+ * referencing these is always safe. Each entry is ONE weight — never add
+ * fontWeight on top of it, or the web renderer fakes the bold and it looks
+ * smeared.
  */
 export const fonts = {
   /** Body text (Inter) — regular weight */
   body: 'Inter_400Regular',
   bodyMedium: 'Inter_500Medium',
   bodySemibold: 'Inter_600SemiBold',
-  /** Headings / section titles (Montserrat, bold) */
-  heading: 'Montserrat_700Bold',
-  /** Hero numbers — health score, stat values (Montserrat, extra bold) */
-  display: 'Montserrat_800ExtraBold',
+  /** Headings / section titles */
+  heading: 'Fraunces_600SemiBold',
+  /** Hero numbers — health score, stat values */
+  display: 'Fraunces_700Bold',
+  /** The one line on a screen that talks to the person — greetings, briefings */
+  voice: 'Fraunces_500Medium_Italic',
 } as const;
 
 /** Font-size scale */

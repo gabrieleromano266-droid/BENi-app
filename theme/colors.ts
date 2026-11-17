@@ -11,7 +11,9 @@
 export const lightColors = {
   // ── Backgrounds ──────────────────────────────────────────────────────────
   background: '#eeeae5',
-  surface: '#ffffff',
+  /** Warm off-white. Pure #fff on the cream read as clinical — like a form
+      on a kitchen table. One step warmer and the cards belong to the room. */
+  surface: '#fcfaf6',
   surfaceSecondary: '#e2dbd0',
 
   // ── Brand / Primary (deep navy, matches demo.html --navy) ─────────────────

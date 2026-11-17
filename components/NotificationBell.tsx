@@ -205,7 +205,6 @@ const styles = StyleSheet.create({
   title: {
     fontFamily: fonts.heading,
     fontSize: fontSize.xl,
-    fontWeight: 'bold',
   },
   summary: {
     fontSize: fontSize.sm,

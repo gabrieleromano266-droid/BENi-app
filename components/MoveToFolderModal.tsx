@@ -74,7 +74,7 @@ export default function MoveToFolderModal({
 const styles = StyleSheet.create({
   overlay: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
   panel: { width: 360, maxWidth: '100%', maxHeight: 460, borderRadius: radius.xl, padding: spacing.lg },
-  title: { fontFamily: fonts.heading, fontSize: fontSize.xl, fontWeight: 'bold' },
+  title: { fontFamily: fonts.heading, fontSize: fontSize.xl },
   subtitle: { fontSize: fontSize.sm, marginTop: 2, marginBottom: spacing.sm },
   list: { marginVertical: spacing.xs },
   row: {

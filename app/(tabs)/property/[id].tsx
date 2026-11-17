@@ -232,7 +232,11 @@ export default function PropertyDetailScreen() {
                   icon="arrow-back"
                   iconSize={22}
                   size={34}
-                  onPress={() => router.push('/(tabs)/dashboard')}
+                  // Back means back. This used to push the dashboard, so the
+                  // arrow from My Properties landed you somewhere you had not
+                  // come from (BENI-55). Fall back to the list when there is
+                  // no history — e.g. the page was opened from a link.
+                  onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/properties' as any))}
                   iconColor={colors.textSecondary}
                   style={{ backgroundColor: 'transparent' }}
                 />

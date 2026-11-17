@@ -1,3 +1,4 @@
+import { nextDueFromCadence, parseRecurrence } from '@/constants/recurrence';
 import { createTask } from '@/services/taskService';
 import { useEffect, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -41,11 +42,32 @@ export default function TaskConfirmationPopup({
     setTasks((prev) => prev.filter((_, i) => i !== index));
   };
 
+  /**
+   * Routine findings arrive from extraction as a phrase ("Every 3 months",
+   * "annually") and no schedule. Give them one here, at the moment they
+   * become real tasks — the same rule migration 0016 applied to the rows that
+   * already existed (BENI-53). Without a cadence they never counted as
+   * recurring; without a due date they could never remind anyone.
+   */
+  const withSchedule = (task: TaskType): TaskType => {
+    const isRoutine = task.taskKind === 'routine' || !!task.recurrence;
+    if (!isRoutine || task.recurFrequency) return task;
+    const cadence = parseRecurrence(task.recurrence) ?? { frequency: 'yearly' as const, interval: 1 };
+    return {
+      ...task,
+      taskKind: 'routine',
+      recurFrequency: cadence.frequency,
+      recurInterval: cadence.interval,
+      recurAnchor: task.recurAnchor ?? 'due_date',
+      dueDate: task.dueDate ?? nextDueFromCadence(cadence.frequency, cadence.interval),
+    };
+  };
+
   const handleConfirm = async () => {
     setSaving(true);
     try {
       for (const task of tasks) {
-        await createTask(userId, { ...task, propertyId, fileId });
+        await createTask(userId, { ...withSchedule(task), propertyId, fileId });
       }
       onClose(true);
     } catch (err) {

@@ -32,6 +32,7 @@ import { useTheme } from '@/theme/ThemeContext';
 import { fonts, fontSize, radius, spacing } from '@/theme/tokens';
 import { Property, TaskKind, TaskRow } from '@/types';
 import { computeHealthScores, getStartHereSuggestion } from '@/utils/healthScore';
+import { homeBriefing, timeOfDayGreeting } from '@/utils/homeBriefing';
 import { dbTaskToTaskType, sortByDueDate } from '@/utils/taskUtils';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useRouter } from 'expo-router';
@@ -107,7 +108,13 @@ export default function DashboardScreen() {
 
   const loadProperties = async (uid: string) => {
     setLoadingProperties(true);
-    setProperties(await fetchProperties(uid));
+    const props = await fetchProperties(uid);
+    setProperties(props);
+    // With several homes, open on the first one rather than on "All". A health
+    // score averaged across two houses describes neither of them, and the
+    // founder's own words were "how am I supposed to know what tasks are
+    // associated to each home?" (BENI-56). "All homes" stays one tap away.
+    setSelectedPropertyId((current) => current ?? (props.length > 1 ? props[0].id : null));
     setLoadingProperties(false);
   };
 
@@ -194,17 +201,33 @@ export default function DashboardScreen() {
     ? allTasks.filter((t) => t.property_id === selectedPropertyId)
     : allTasks;
 
+  /**
+   * ONE definition of what kind of task something is (BENI-53).
+   *
+   * The Recurring tile used to count tasks with a cadence while the "Routine
+   * upkeep" chip counted task_kind === 'routine' — and the two sets did not
+   * match (20 vs 37 on the founder's home), because plan jobs arrived with no
+   * kind and report findings arrived with no cadence. Migration 0016 fixed the
+   * data; this makes the UI unable to disagree with itself again: anything on
+   * a schedule is routine, full stop.
+   */
+  const kindOf = (t: TaskRow): TaskKind =>
+    t.recur_frequency ? 'routine' : ((t.task_kind ?? 'action') as TaskKind);
+
   const criticalCount = scopedTasks.filter((t) => t.severity === 'critical').length;
   const moderateCount = scopedTasks.filter((t) => t.severity === 'moderate').length;
-  const recurringCount = scopedTasks.filter((t) => !!t.recur_frequency).length;
-  const unassignedCount = scopedTasks.filter((t) => !t.system).length;
+  const routineCount = scopedTasks.filter((t) => kindOf(t) === 'routine').length;
 
   // The recurring bank is seeded but does nothing until a property opts into
   // features. Until then "Recurring" reads 0 and BENi looks like a one-off
   // report parser rather than something that keeps a home on schedule.
   const hasNoProperty = !loadingProperties && properties.length === 0;
   const planProperty = selectedPropertyId ?? properties[0]?.id ?? null;
-  const needsPlan = !loadingTasks && recurringCount === 0 && !!planProperty;
+  // Report findings can be routine too now, so "any routine task" no longer
+  // proves the plan was set up. Plan jobs are the routine tasks that did not
+  // come from a report (no file behind them).
+  const hasPlan = scopedTasks.some((t) => kindOf(t) === 'routine' && !t.file_id);
+  const needsPlan = !loadingTasks && !hasPlan && !!planProperty;
 
   const handleSetupPlan = async () => {
     if (!planProperty || !userId) return;
@@ -224,7 +247,7 @@ export default function DashboardScreen() {
   };
 
   // Tapping a stat tile toggles that filter (re-tapping the active one clears it)
-  const toggleSeverity = (key: string) =>
+  const toggleSeverity = (key: string) => {
     setSeverityFilter((prev) => {
       const next = prev === key ? null : key;
       // Entering/leaving the Completed view resets the system chip. Without this
@@ -233,6 +256,18 @@ export default function DashboardScreen() {
       if (next === 'completed' || prev === 'completed') setSystemFilter(null);
       return next;
     });
+    // Severity lives on report findings, which are jobs. Tapping Critical while
+    // the Routine view is up would show an empty list and a "(0)" chip.
+    setKindFilter('action');
+  };
+
+  // The Recurring tile IS the Routine upkeep view — same set, same number,
+  // whichever of the two you tap.
+  const toggleRoutine = () => {
+    setSeverityFilter(null);
+    setSystemFilter(null);
+    setKindFilter((prev) => (prev === 'routine' ? 'action' : 'routine'));
+  };
 
   const { overall, bySystem } = computeHealthScores(scopedTasks);
   const startHere = getStartHereSuggestion(scopedTasks, bySystem);
@@ -249,7 +284,6 @@ export default function DashboardScreen() {
     switch (severityFilter) {
       case 'critical': return t.severity === 'critical';
       case 'moderate': return t.severity === 'moderate';
-      case 'recurring': return !!t.recur_frequency;
       // The plan lists only OPEN tasks, so nothing here is "completed" — loading
       // completed tasks would need a services/ change, which is out of scope.
       case 'completed': return true; // handled via completedScoped below
@@ -262,25 +296,28 @@ export default function DashboardScreen() {
   // is the filter contradicting itself — you cannot tell what you are looking
   // at. In the Completed view the chips count completed tasks instead, since
   // the open plan contains none of them by definition.
-  // Older tasks predate classification; treat an untagged task as a job so
-  // nothing silently disappears from the plan.
-  const matchesKind = (t: TaskRow) => (t.task_kind ?? 'action') === kindFilter;
+  const matchesKind = (t: TaskRow) => kindOf(t) === kindFilter;
 
+  // Counted AFTER the tile has narrowed things down, so tapping Critical (15)
+  // reads "To do (15)" underneath it, not "To do (117)" (BENI-54).
+  const tileScoped = scopedTasks.filter(matchesSeverity);
   const kindCounts = {
-    action: scopedTasks.filter((t) => (t.task_kind ?? 'action') === 'action').length,
-    routine: scopedTasks.filter((t) => t.task_kind === 'routine').length,
-    note: scopedTasks.filter((t) => t.task_kind === 'note').length,
+    action: tileScoped.filter((t) => kindOf(t) === 'action').length,
+    routine: tileScoped.filter((t) => kindOf(t) === 'routine').length,
+    note: tileScoped.filter((t) => kindOf(t) === 'note').length,
   };
 
   const chipSource =
     severityFilter === 'completed'
       ? completedScoped
-      : scopedTasks.filter((t) => matchesSeverity(t) && matchesKind(t));
+      : tileScoped.filter(matchesKind);
 
   const unassignedInView = chipSource.filter((t) => !t.system).length;
 
   const filterOptions: ChipOption[] = [
-    { label: `All (${chipSource.length})`, value: null },
+    // "All systems", not "All" — next to "To do (117)" a bare "All (117)" read
+    // as the same number said twice.
+    { label: `All systems (${chipSource.length})`, value: null },
     // Show all six systems even at zero, so the filter row is predictable and a
     // homeowner can see which parts of the home currently have nothing open.
     ...SYSTEMS
@@ -299,10 +336,18 @@ export default function DashboardScreen() {
   const pendingDeleteTaskTitle = allTasks.find((t) => t.id === pendingDeleteTaskIds[0])?.title;
   const selectedProperty = selectedPropertyId ? properties.find((p) => p.id === selectedPropertyId) : null;
 
-  // "Welcome home, Gabriele" — falls back to a nameless greeting until the
+  // "Good evening, Gabriele" — falls back to a nameless greeting until the
   // profile loads or if the user never set a first name.
   const displayName = firstName ? firstName.charAt(0).toUpperCase() + firstName.slice(1) : '';
-  const greeting = displayName ? `Welcome home, ${displayName}` : 'Welcome home';
+  const greeting = displayName ? `${timeOfDayGreeting()}, ${displayName}` : timeOfDayGreeting();
+
+  // The subtitle used to be the same slogan for everyone every day. Now it is
+  // one sentence written from this home's own list — see utils/homeBriefing.
+  const briefing = loadingTasks
+    ? 'Reading your plan…'
+    : hasNoProperty
+      ? 'Own your home, not just the keys.'
+      : homeBriefing(scopedTasks);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -310,16 +355,20 @@ export default function DashboardScreen() {
     <PageContainer>
       <PageHeader
         title={greeting}
-        subtitle="Own your home, not just the keys. Here's your home health summary."
+        subtitle={briefing}
         subtitleColor={colors.gold}
+        subtitleVoice
         right={
           <View style={styles.propertyIndicator}>
-            {!SINGLE_PROPERTY_MODE && properties.length > 1 && (
+            {/* Whenever there is more than one home, say which one this is.
+                Single-property mode only stops you ADDING a second home; it
+                must never hide the ones that exist (BENI-56). */}
+            {properties.length > 1 && (
               <Dropdown
                 options={properties.map((p) => ({ label: p.name, value: p.id }))}
                 selected={selectedPropertyId}
                 onSelect={setSelectedPropertyId}
-                placeholder="All Properties"
+                placeholder="All homes"
                 size="sm"
                 style={styles.propertyDropdown}
               />
@@ -435,9 +484,9 @@ export default function DashboardScreen() {
         />
         <StatTile
           icon="repeat" label="Recurring" sublabel="On schedule"
-          value={loadingTasks ? '–' : recurringCount}
+          value={loadingTasks ? '–' : routineCount}
           iconColor={colors.info} badgeColor={colors.infoLight}
-          active={severityFilter === 'recurring'} onPress={() => toggleSeverity('recurring')}
+          active={kindFilter === 'routine' && !severityFilter} onPress={toggleRoutine}
         />
         <StatTile
           icon="check-circle-outline" label="Completed" sublabel="Well done"
@@ -468,7 +517,13 @@ export default function DashboardScreen() {
                 ...(kindCounts.note > 0 ? [{ label: `Good to know (${kindCounts.note})`, value: 'note' }] : []),
               ]}
               selected={kindFilter}
-              onSelect={(v) => setKindFilter((v as TaskKind) ?? 'action')}
+              onSelect={(v) => {
+                const next = (v as TaskKind) ?? 'action';
+                // Routine jobs carry no severity, so a tile left selected
+                // would just empty the list.
+                if (next === 'routine') setSeverityFilter(null);
+                setKindFilter(next);
+              }}
             />
           )}
 
@@ -585,10 +640,17 @@ function StatTile({
 }) {
   const { colors } = useTheme();
   return (
-    <Card style={[styles.statTile, active && { borderColor: iconColor, borderWidth: 2 }]}>
+    <Card
+      style={[
+        styles.statTile,
+        // The active tile fills with its own tint rather than just gaining a
+        // border — you can tell which view you are in from across the room.
+        active && { borderColor: iconColor, borderWidth: 2, backgroundColor: badgeColor },
+      ]}
+    >
       <TouchableOpacity onPress={onPress} activeOpacity={0.8} accessibilityRole="button">
         <View style={styles.statTop}>
-          <Text style={[styles.statLabel, { color: colors.textMuted }]}>{label.toUpperCase()}</Text>
+          <Text style={[styles.statLabel, { color: colors.textMuted }]}>{label}</Text>
           <View style={[styles.statIconTile, { backgroundColor: badgeColor }]}>
             <MaterialIcons name={icon} size={16} color={iconColor} />
           </View>
@@ -639,10 +701,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: spacing.sm,
   },
+  // Sentence case, not SHOUTED. Small caps with letter-spacing is the
+  // dashboard-software dialect; a label on a kitchen noticeboard just says
+  // "Critical".
   statLabel: {
-    fontSize: fontSize.xs,
-    fontWeight: '600',
-    letterSpacing: 0.8,
+    fontSize: fontSize.sm,
+    fontFamily: fonts.bodySemibold,
   },
   statIconTile: {
     width: 28,
@@ -653,8 +717,8 @@ const styles = StyleSheet.create({
   },
   statValue: {
     fontFamily: fonts.display,
-    fontSize: fontSize.h2,
-    fontWeight: 'bold',
+    fontSize: 30,
+    lineHeight: 36,
   },
   statSub: {
     fontSize: fontSize.xs,
@@ -676,8 +740,7 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     fontFamily: fonts.heading,
-    fontSize: fontSize.xxl,
-    fontWeight: '600',
+    fontSize: fontSize.h3,
     flex: 1,
   },
   healthCol: {

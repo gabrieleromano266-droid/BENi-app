@@ -240,7 +240,7 @@ const styles = StyleSheet.create({
   stepNum: { color: '#fff', fontSize: 12, fontWeight: '700' },
   stepLabel: { fontSize: fontSize.xs, fontWeight: '600' },
   stepLine: { flex: 1, height: 2, marginHorizontal: spacing.sm, marginBottom: 16 },
-  title: { fontFamily: fonts.heading, fontSize: fontSize.h3, fontWeight: 'bold', marginBottom: 6 },
+  title: { fontFamily: fonts.heading, fontSize: fontSize.h3, marginBottom: 6 },
   body: { fontSize: fontSize.md, lineHeight: 20, marginBottom: spacing.lg },
   hint: { fontSize: fontSize.sm, lineHeight: 18, marginTop: spacing.md },
   skip: { alignSelf: 'center', paddingVertical: spacing.md },

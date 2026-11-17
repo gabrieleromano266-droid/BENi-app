@@ -193,7 +193,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.xl,
     padding: spacing.xl,
   },
-  title: { fontFamily: fonts.heading, fontSize: fontSize.xxl, fontWeight: 'bold' },
+  title: { fontFamily: fonts.heading, fontSize: fontSize.xxl },
   subtitle: { fontSize: fontSize.sm, marginTop: 4, marginBottom: spacing.lg, lineHeight: 19 },
   label: { fontWeight: '600', marginBottom: 4 },
   actions: { marginTop: spacing.xl, gap: spacing.sm },

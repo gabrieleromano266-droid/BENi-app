@@ -23,9 +23,14 @@ type Props = {
   right?: ReactNode;
   /** Set false where the bell would be noise (e.g. auth screens). */
   showBell?: boolean;
+  /** Render the subtitle in the "voice" serif — for a line written to the
+      person (the dashboard briefing), not a description of the screen. */
+  subtitleVoice?: boolean;
 };
 
-export default function PageHeader({ title, subtitle, subtitleColor, left, right, showBell = true }: Props) {
+export default function PageHeader({
+  title, subtitle, subtitleColor, left, right, showBell = true, subtitleVoice = false,
+}: Props) {
   const { colors } = useTheme();
   const { width } = useWindowDimensions();
 
@@ -50,7 +55,15 @@ export default function PageHeader({ title, subtitle, subtitleColor, left, right
             {title}
           </Text>
           {subtitle != null && (
-            <Text style={[styles.subtitle, { color: subtitleColor ?? colors.textMuted }]}>{subtitle}</Text>
+            <Text
+              style={[
+                styles.subtitle,
+                subtitleVoice && styles.subtitleVoice,
+                { color: subtitleColor ?? colors.textMuted },
+              ]}
+            >
+              {subtitle}
+            </Text>
           )}
         </View>
         {showBell && <NotificationBell />}
@@ -80,10 +93,11 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: spacing.xs,
   },
+  // No fontWeight here on purpose: fonts.heading is already a single weight,
+  // and stacking 'bold' on it makes the web renderer fake a heavier one.
   title: {
     fontFamily: fonts.heading,
     fontSize: fontSize.h2,
-    fontWeight: 'bold',
   },
   titleNarrow: {
     fontSize: fontSize.h3,
@@ -91,5 +105,10 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: fontSize.md,
+  },
+  subtitleVoice: {
+    fontFamily: fonts.voice,
+    fontSize: fontSize.lg,
+    lineHeight: 22,
   },
 });
