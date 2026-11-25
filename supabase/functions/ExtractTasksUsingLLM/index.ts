@@ -349,6 +349,21 @@ async function chatJSON(system: string, user: string, label: string): Promise<Re
   if (!apiKey) throw new Error('OPENAI_API_KEY is not configured in Edge Function secrets.');
   const model = Deno.env.get('OPENAI_MODEL') ?? 'gpt-4o-mini';
 
+  /**
+   * gpt-4o-mini shuts down on 14 Jan 2027 (OpenAI deprecations page, checked
+   * 2026-11-24), so the model is chosen by the OPENAI_MODEL secret — switching
+   * is a dashboard change, not a redeploy (BENI-66).
+   *
+   * The GPT-5/6 and o-series models are reasoning models and take different
+   * parameters: no custom temperature, and a reasoning effort instead. "low"
+   * is right for extraction — the work is careful reading, not puzzle-solving,
+   * and reasoning tokens are billed as output.
+   */
+  const isReasoningModel = /^(gpt-[5-9]|o\d)/i.test(model);
+  const tuning = isReasoningModel
+    ? { reasoning_effort: Deno.env.get('OPENAI_REASONING_EFFORT') ?? 'low' }
+    : { temperature: 0.1 };
+
   const MAX_ATTEMPTS = 3;
   let lastError = '';
 
@@ -358,7 +373,7 @@ async function chatJSON(system: string, user: string, label: string): Promise<Re
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model,
-        temperature: 0.1,
+        ...tuning,
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: system },
@@ -756,6 +771,111 @@ function titleTokens(title: string): Set<string> {
   return out;
 }
 
+/**
+ * Tokens for deciding whether two findings are the SAME DEFECT (BENI-65).
+ *
+ * Separate from titleTokens on purpose: titleTokens also keys the shared
+ * finding library and the recurring-bank match, and changing it would split
+ * every library row collected since September.
+ *
+ * Two differences:
+ *   1. Action verbs are dropped. "Install safety handrails on rear deck" and
+ *      "Install handrails on rear deck stairs" are one job; so are "Install
+ *      safety sensors on left garage door" and "Repair non-functional garage
+ *      door safety sensors". The verb is how to fix it, not what is wrong.
+ *   2. Common multi-word components become ONE token first. Otherwise "hot
+ *      water tank" counts as three shared facts and "Confirm insurance
+ *      coverage for hot water tank" merges with "Evaluate right hot water
+ *      tank" — the one false positive found when this was tested against all
+ *      339 findings in the database (2026-11-24).
+ */
+const DEFECT_COMPOUNDS: [RegExp, string][] = [
+  [/hot water (tank|heater)s?|water heaters?|dhw tank/g, 'waterheater'],
+  [/garage doors?/g, 'garagedoor'],
+  [/(electrical|breaker|service) panels?/g, 'elecpanel'],
+  [/sump pumps?/g, 'sumppump'],
+  [/exhaust fans?/g, 'exhaustfan'],
+  [/smoke (and|&) (co|carbon monoxide) (alarms?|detectors?)/g, 'smokecoalarm'],
+  [/dryer vents?/g, 'dryervent'],
+];
+
+const DEFECT_VERBS = new Set([
+  'repair', 'replace', 'install', 'fix', 'address', 'evaluate', 'check', 'inspect',
+  'clean', 'service', 'improve', 'seal', 'maintain', 'monitor', 'consult', 'have',
+  'hire', 'schedule', 'further', 'ensure', 'perform', 'obtain', 'correct', 'adjust',
+  'secure', 'upgrade', 'add', 'remove', 'tighten', 'review', 'consider', 'recommend',
+]);
+
+function defectTokens(title: string): Set<string> {
+  let s = (title || '').toLowerCase().replace(/[^a-z0-9 &]/g, ' ');
+  for (const [re, rep] of DEFECT_COMPOUNDS) s = s.replace(re, rep);
+  const out = new Set<string>();
+  for (const raw of s.replace(/&/g, ' ').split(/\s+/)) {
+    if (!raw) continue;
+    const expanded = DEDUPE_SYNONYMS[raw] ?? raw;
+    for (const piece of expanded.split(' ')) {
+      const word = singularise(DEDUPE_SYNONYMS[piece] ?? piece);
+      if (word && !DEDUPE_STOP.has(word) && !DEFECT_VERBS.has(word)) out.add(word);
+    }
+  }
+  return out;
+}
+
+/**
+ * Share of the SHORTER title that the longer one contains. Catches "Fix sink
+ * drain stopper" inside "Fix non-functioning sink drain stopper", which
+ * Jaccard scores at only 0.6 because the longer title has more words. Only
+ * trusted when the shorter title has 3+ meaningful words: with 2, "garage
+ * subpanel" would swallow every garage-subpanel finding regardless of defect.
+ */
+function containment(a: Set<string>, b: Set<string>): number {
+  const smaller = Math.min(a.size, b.size);
+  if (smaller < 3) return 0;
+  let shared = 0;
+  for (const w of a) if (b.has(w)) shared++;
+  return shared / smaller;
+}
+
+const CONTAINMENT_THRESHOLD = 0.75;
+
+const SEVERITY_RANK: Record<string, number> = { critical: 3, moderate: 2, minor: 1 };
+
+/**
+ * Fold a duplicate into the finding we are keeping, without losing anything.
+ *
+ * This used to be Object.assign(keeper, richer): the wordier copy replaced the
+ * other wholesale, so the merged task could inherit a worse page, a lower
+ * severity, or no cost match. Now the fuller wording still wins, but:
+ *   - a page from the report body beats a page from the summary (the body is
+ *     where the photos and detail are);
+ *   - the higher severity survives — a duplicate must never downgrade a hazard;
+ *   - a catalog match and its cost are kept if either copy had them;
+ *   - "the inspector called this out in the summary" survives too.
+ */
+function absorb(keeper: ExtractedTask, other: ExtractedTask): void {
+  const detail = (t: ExtractedTask) =>
+    (t.issue?.length ?? 0) + (t.fixRecommendation?.length ?? 0) + (t.location?.length ?? 0);
+
+  const bodyPage = [keeper, other].find((t) => t.sourcePage && !t.fromSummary)?.sourcePage;
+  const anyPage = keeper.sourcePage ?? other.sourcePage;
+  const severity = (SEVERITY_RANK[other.severity ?? ''] ?? 0) > (SEVERITY_RANK[keeper.severity ?? ''] ?? 0)
+    ? other.severity : keeper.severity;
+  const withCatalog = keeper.catalogId ? keeper : other.catalogId ? other : null;
+  const fromSummary = keeper.fromSummary || other.fromSummary;
+
+  if (detail(other) > detail(keeper)) Object.assign(keeper, other);
+
+  keeper.sourcePage = bodyPage ?? anyPage ?? null;
+  keeper.severity = severity;
+  keeper.fromSummary = fromSummary;
+  if (!keeper.catalogId && withCatalog) {
+    keeper.catalogId = withCatalog.catalogId;
+    keeper.costMin = withCatalog.costMin;
+    keeper.costMax = withCatalog.costMax;
+    keeper.costConfidence = withCatalog.costConfidence;
+  }
+}
+
 /** How much two findings overlap, 0..1. */
 function tokenOverlap(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 || b.size === 0) return 0;
@@ -782,9 +902,6 @@ function mergeSameCatalogEntry(tasks: ExtractedTask[]): ExtractedTask[] {
   const out: ExtractedTask[] = [];
   let merged = 0;
 
-  const detail = (t: ExtractedTask) =>
-    (t.issue?.length ?? 0) + (t.fixRecommendation?.length ?? 0) + (t.location?.length ?? 0);
-
   // Unmatched findings need a text-based key: production produced "Install
   // safety sensors FOR left garage door" and "...ON left garage door" as two
   // separate tasks. Dropping filler words and sorting the rest makes those
@@ -803,7 +920,7 @@ function mergeSameCatalogEntry(tasks: ExtractedTask[]): ExtractedTask[] {
       if (!existing) { byKey.set(key, t); out.push(t); }
       else {
         merged++;
-        if (detail(t) > detail(existing)) Object.assign(existing, t);
+        absorb(existing, t);
       }
       continue;
     }
@@ -811,9 +928,7 @@ function mergeSameCatalogEntry(tasks: ExtractedTask[]): ExtractedTask[] {
     const existing = byKey.get(key);
     if (!existing) { byKey.set(key, t); out.push(t); continue; }
     merged++;
-    if (detail(t) > detail(existing)) {
-      Object.assign(existing, t);                       // keep the fuller wording
-    }
+    absorb(existing, t);
   }
   if (merged > 0) console.log(`Merged ${merged} duplicate finding(s) by exact key.`);
 
@@ -827,19 +942,22 @@ function mergeSameCatalogEntry(tasks: ExtractedTask[]): ExtractedTask[] {
   let fuzzyMerged = 0;
 
   for (const t of out) {
-    const tok = titleTokens(t.title || '');
+    const tok = defectTokens(t.title || '');
     let absorbedBy = -1;
     for (let i = 0; i < survivors.length; i++) {
       if ((survivors[i].system ?? '') !== (t.system ?? '')) continue;
-      if (tokenOverlap(tok, survivorTokens[i]) >= DUPLICATE_THRESHOLD) { absorbedBy = i; break; }
+      const other = survivorTokens[i];
+      if (tokenOverlap(tok, other) >= DUPLICATE_THRESHOLD || containment(tok, other) >= CONTAINMENT_THRESHOLD) {
+        absorbedBy = i;
+        break;
+      }
     }
     if (absorbedBy === -1) {
       survivors.push(t);
       survivorTokens.push(tok);
     } else {
       fuzzyMerged++;
-      // Keep whichever wording carries more detail for the homeowner.
-      if (detail(t) > detail(survivors[absorbedBy])) Object.assign(survivors[absorbedBy], t);
+      absorb(survivors[absorbedBy], t);
     }
   }
 

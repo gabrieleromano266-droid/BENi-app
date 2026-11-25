@@ -15,8 +15,9 @@ import { TaskRow, TaskSeverity } from '@/types';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { openFileAtPage } from '@/services/fileService';
 import { useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import IconButton from '../IconButton';
+import ReportPageViewer from '../ReportPageViewer';
 
 type Props = {
   task: TaskRow;
@@ -63,8 +64,16 @@ export default function MaintenanceTaskCard({ task, showProperty, onComplete, on
   // which page — a link that lands on the cover page is worse than no link.
   const canViewSource = !!task.filePath && !!task.source_page;
 
+  const [viewerOpen, setViewerOpen] = useState(false);
+
   const viewInReport = async () => {
     if (!task.filePath) return;
+    // On the web, show the exact page inside BENi — Adobe's viewer ignores
+    // #page=N, so a new tab often landed on page 1 (BENI-64).
+    if (Platform.OS === 'web') {
+      setViewerOpen(true);
+      return;
+    }
     setOpeningReport(true);
     try {
       await openFileAtPage(task.filePath, task.source_page);
@@ -218,6 +227,17 @@ export default function MaintenanceTaskCard({ task, showProperty, onComplete, on
             />
           </View>
         </View>
+      )}
+
+      {viewerOpen && (
+        <ReportPageViewer
+          visible={viewerOpen}
+          filePath={task.filePath ?? null}
+          page={task.source_page ?? null}
+          taskTitle={task.title}
+          fileName={task.fileName || undefined}
+          onClose={() => setViewerOpen(false)}
+        />
       )}
     </View>
   );

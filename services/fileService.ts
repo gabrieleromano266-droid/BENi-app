@@ -148,6 +148,19 @@ export async function deleteFiles(files: FileRecord[], deleteLinkedTasks = true)
  * The bucket is private, so the signed URL is the only way a viewer can read
  * it, and it expires in ten minutes.
  */
+/**
+ * A short-lived link to a private report, for the in-app page viewer. Ten
+ * minutes is plenty to render a page and short enough that a copied link
+ * stops working before it can travel anywhere.
+ */
+export async function signedReportUrl(filePath: string): Promise<string> {
+  const { data, error } = await supabase.storage
+    .from('user_files')
+    .createSignedUrl(filePath, 600);
+  if (error || !data?.signedUrl) throw error || new Error('Could not open this report');
+  return data.signedUrl;
+}
+
 export async function openFileAtPage(
   filePath: string,
   page?: number | null,
