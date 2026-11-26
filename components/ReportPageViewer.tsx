@@ -30,12 +30,40 @@ const PDFJS_BASE = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSIO
 type PdfJs = {
   getDocument: (src: { url: string }) => { promise: Promise<PdfDoc> };
   GlobalWorkerOptions: { workerSrc: string };
+  Util: { transform: (a: number[], b: number[]) => number[] };
 };
+type TextItem = { str?: string; transform: number[]; width: number };
 type PdfDoc = { numPages: number; getPage: (n: number) => Promise<PdfPage>; destroy: () => void };
+type Viewport = { width: number; height: number; scale: number; transform: number[] };
 type PdfPage = {
-  getViewport: (o: { scale: number }) => { width: number; height: number };
+  getViewport: (o: { scale: number }) => Viewport;
   render: (o: { canvasContext: CanvasRenderingContext2D; viewport: unknown }) => { promise: Promise<void>; cancel: () => void };
+  getTextContent: () => Promise<{ items: TextItem[] }>;
 };
+
+const words = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter(Boolean);
+
+/**
+ * Where in the page's words does the quote sit? Exact sequence first; then the
+ * longest run of its opening (or closing) words, so a line break or a
+ * hyphenated word in the PDF doesn't lose the whole highlight.
+ */
+function findQuote(pageWords: string[], quote: string[]): [number, number] | null {
+  const at = (needle: string[]) => {
+    outer: for (let i = 0; i + needle.length <= pageWords.length; i++) {
+      for (let k = 0; k < needle.length; k++) if (pageWords[i + k] !== needle[k]) continue outer;
+      return i;
+    }
+    return -1;
+  };
+  for (let len = quote.length; len >= 5; len--) {
+    const head = at(quote.slice(0, len));
+    if (head >= 0) return [head, head + len - 1];
+    const tail = at(quote.slice(quote.length - len));
+    if (tail >= 0) return [tail, tail + len - 1];
+  }
+  return null;
+}
 
 let pdfjsPromise: Promise<PdfJs> | null = null;
 
@@ -66,11 +94,13 @@ type Props = {
   page: number | null;
   /** What the homeowner was looking at — shown above the page. */
   taskTitle?: string;
+  /** The inspector's sentence to highlight on the page (BENI-69). */
+  highlight?: string | null;
   fileName?: string;
   onClose: () => void;
 };
 
-export default function ReportPageViewer({ visible, filePath, page, taskTitle, fileName, onClose }: Props) {
+export default function ReportPageViewer({ visible, filePath, page, taskTitle, fileName, highlight, onClose }: Props) {
   const { colors } = useTheme();
   const { width, height } = useWindowDimensions();
   const pageWidth = Math.min(width - 32, 860) - spacing.lg * 2;
@@ -83,6 +113,11 @@ export default function ReportPageViewer({ visible, filePath, page, taskTitle, f
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [highlighted, setHighlighted] = useState(false);
+  // Only go looking on other pages once per open, so flipping pages by hand
+  // never gets yanked back.
+  const searchedRef = useRef(false);
+  const libRef = useRef<PdfJs | null>(null);
 
   // Open: fetch a fresh signed link and load the document.
   useEffect(() => {
@@ -91,9 +126,11 @@ export default function ReportPageViewer({ visible, filePath, page, taskTitle, f
     setCurrent(page ?? 1);
     setError(null);
     setLoading(true);
+    searchedRef.current = false;
     (async () => {
       try {
         const [lib, url] = await Promise.all([loadPdfJs(), signedReportUrl(filePath)]);
+        libRef.current = lib;
         const doc = await lib.getDocument({ url }).promise;
         if (cancelled) { doc.destroy(); return; }
         docRef.current = doc;
@@ -137,6 +174,44 @@ export default function ReportPageViewer({ visible, filePath, page, taskTitle, f
         const task = p.render({ canvasContext: ctx, viewport });
         renderRef.current = task;
         await task.promise;
+        if (cancelled) return;
+
+        // Highlighter: paint over the inspector's sentence so the homeowner
+        // can see, not just be told, where it says this.
+        setHighlighted(false);
+        const quote = highlight ? words(highlight) : [];
+        if (quote.length >= 5 && libRef.current) {
+          const { items } = await p.getTextContent();
+          const pageWords: string[] = [];
+          const owner: number[] = [];
+          items.forEach((it, idx) => words(it.str ?? '').forEach((w) => { pageWords.push(w); owner.push(idx); }));
+          const hit = findQuote(pageWords, quote);
+          if (hit) {
+            const hitItems = new Set(owner.slice(hit[0], hit[1] + 1));
+            ctx.save();
+            ctx.globalCompositeOperation = 'multiply';
+            ctx.fillStyle = 'rgba(255, 213, 0, 0.55)';
+            hitItems.forEach((idx) => {
+              const it = items[idx];
+              const tx = libRef.current!.Util.transform(viewport.transform, it.transform);
+              const h = Math.hypot(tx[2], tx[3]);
+              ctx.fillRect(tx[4], tx[5] - h, it.width * viewport.scale, h * 1.15);
+            });
+            ctx.restore();
+            setHighlighted(true);
+          } else if (!searchedRef.current) {
+            // Not on this page? Look through the report once and go there.
+            searchedRef.current = true;
+            for (let q = 1; q <= doc.numPages; q++) {
+              if (q === n) continue;
+              const other = await doc.getPage(q);
+              const tc = await other.getTextContent();
+              const otherWords: string[] = [];
+              tc.items.forEach((it) => otherWords.push(...words(it.str ?? '')));
+              if (findQuote(otherWords, quote)) { if (!cancelled) setCurrent(q); break; }
+            }
+          }
+        }
       } catch (err) {
         // A cancelled render throws by design when the user flips pages fast.
         if (!cancelled && (err as Error)?.name !== 'RenderingCancelledException') {
@@ -147,7 +222,7 @@ export default function ReportPageViewer({ visible, filePath, page, taskTitle, f
       }
     })();
     return () => { cancelled = true; };
-  }, [visible, current, total, pageWidth]);
+  }, [visible, current, total, pageWidth, highlight]);
 
   const openWhole = () => {
     if (filePath) openFileAtPage(filePath, current).catch(() => {});
@@ -164,6 +239,7 @@ export default function ReportPageViewer({ visible, filePath, page, taskTitle, f
             <View style={styles.headerText}>
               <Text style={[styles.eyebrow, { color: colors.gold }]}>
                 Page {current}{total ? ` of ${total}` : ''}{fileName ? ` · ${fileName}` : ''}
+                {highlighted ? ' · inspector’s note highlighted' : ''}
               </Text>
               {taskTitle ? (
                 <Text style={[styles.title, { color: colors.textPrimary }]} numberOfLines={2}>{taskTitle}</Text>

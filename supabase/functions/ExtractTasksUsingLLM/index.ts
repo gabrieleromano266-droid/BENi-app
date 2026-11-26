@@ -58,6 +58,25 @@ type ExtractedTask = {
   fromSummary: boolean;
   /** Why this is a safety matter, when it is one — see safetyReason(). */
   safetyReason?: string | null;
+  /**
+   * The inspector's own sentence(s), copied verbatim by the model and then
+   * CHECKED against the PDF text (locateQuote). Unverified quotes are dropped
+   * before anything is returned — the app never shows words the inspector
+   * did not write.
+   */
+  quote?: string | null;
+  /** Plain-English reason for the severity, shown next to it as proof. */
+  severityReason?: string | null;
+  /** Parsed from `recurrence` so the confirm screen shows the real schedule. */
+  recurFrequency?: 'daily' | 'weekly' | 'monthly' | 'yearly' | null;
+  recurInterval?: number | null;
+  /** Days from the inspection the report allows — lets the app re-date if the
+      homeowner corrects the inspection date on the confirm screen. */
+  dueWindowDays?: number | null;
+  /** The report's own deadline had already passed when it was uploaded. */
+  carriedOver?: boolean;
+  /** Where the verified quote sits in the page's normalised text. Internal. */
+  quoteAt?: { page: number; start: number; end: number } | null;
 };
 
 // Section headings used by the target inspection format. Findings live under
@@ -114,7 +133,23 @@ TWO findings. Missing one is the worst possible failure. Only skip genuinely
 non-actionable text: "no deficiencies noted", credentials, disclaimers,
 standards of practice, invoices.
 
+ONE FINDING = OBSERVATION + RECOMMENDATION
+An observation and the recommendation that follows it are ONE finding, even
+when they are two sentences ("There is a drain leak at the second floor
+bathroom sink drain. Recommend repair by a qualified plumber to prevent water
+damage."). Never return the recommendation sentence as a separate finding.
+
+ONE JOB PER FINDING
+If one sentence asks for two different jobs, return TWO findings. Example:
+"Furnaces require regular servicing; recommend following the manufacturer's
+guidelines and replace disposable filters every 3 months." is
+  1) "Service the furnace yearly"  and  2) "Replace the furnace filter" (every 3 months).
+
 FIELDS per finding
+- quote: the inspector's EXACT words for this finding — copy the sentence(s)
+  character for character from the text, 1 to 3 sentences, including any URL.
+  Never paraphrase, never fix typos, never join text from different places.
+  This is shown to the homeowner as proof, and it is checked against the PDF.
 - title: short, action-first, specific ("Reseal roof flashing at the chimney").
   Never just repeat the component name.
 - issue: 1-2 plain sentences on what is wrong, for a homeowner.
@@ -124,12 +159,25 @@ FIELDS per finding
   wiring/outlets/panels -> electrical; pipes/drains/water heater -> plumbing;
   furnace/AC/ducts -> hvac; roof/attic -> roof_attic; grading/siding/gutters/
   garage -> exterior; kitchen/bathroom/living space -> interior.
-- severity: one of ${SEVERITIES.join(', ')} - best judgement.
+- severity, using THIS rubric (the words "recommend"/"should" alone decide nothing):
+    critical = someone could get hurt (fire, shock, gas, carbon monoxide, falls,
+               trip hazards, missing alarms); OR water is getting in right now
+               (any leak, water entry, sewage); OR the damage spreads or becomes
+               very expensive if left (structural movement or rot, sewer/main
+               line problems, mould); OR the report says ASAP / immediately /
+               as soon as possible.
+    moderate = a real repair or evaluation the report recommends to prevent
+               future damage, with no immediate danger.
+    minor    = small, cosmetic, convenience, or "for your information".
+- severityReason: under 10 words, WHY — name the trigger from the text
+  ("Active leak - water damage and mould risk", "Report says ASAP",
+  "Fall hazard on deck", "Cosmetic wear only").
 - costMin/costMax: rough CAD integers, or null.
 - dueDate: ISO YYYY-MM-DD only if the report states/implies one, else null.
 - timingNote: short and practical, or null.
-- recurrence: "Every 3 months" | "Every 6 months" | "Yearly" if it is recurring
-  upkeep, else null.
+- recurrence: the interval EXACTLY as the report states it, normalised to
+  "Every N days|weeks|months|years" ("Every 2 years", "Every 3 months",
+  "Every 5 years", "Every 1 years" for yearly). null if not recurring upkeep.
 
 Return ONLY valid JSON: { "tasks": [...] }. No markdown fences.`;
 }
@@ -415,8 +463,14 @@ async function chatJSON(system: string, user: string, label: string): Promise<Re
  * Split the report so each extraction call sees a small, focused slice.
  * Long documents are where recall collapses: the model skims. Sectioning by the
  * report's own ALL-CAPS headings keeps each call short and specific.
+ *
+ * 3,500 (was 7,000): the calls run in parallel, so the upload takes as long
+ * as the SLOWEST section. Measured on the founder's report (2026-11-25): 9
+ * sections, 48-65 s of a 59-74 s upload, dominated by the two biggest. Half
+ * the size means twice the calls but each returns in about half the time —
+ * and now that every finding carries a verbatim quote, output is longer.
  */
-const MAX_CHUNK_CHARS = 7000;
+const MAX_CHUNK_CHARS = 3500;
 
 /** A slice of the report plus where in the report it began. */
 type Chunk = { text: string; start: number };
@@ -451,12 +505,23 @@ function splitIntoChunks(text: string): Chunk[] {
     sections = [{ text, start: 0 }];
   }
 
-  // Hard-split anything still too long so no single call gets a wall of text.
+  // Split anything still too long — at a LINE break, never mid-sentence. The
+  // old fixed-size slice could cut one finding across two calls, and each
+  // half then came back as its own (wrong) task.
   const chunks: Chunk[] = [];
   for (const sec of sections) {
     if (sec.text.length <= MAX_CHUNK_CHARS) { chunks.push(sec); continue; }
-    for (let i = 0; i < sec.text.length; i += MAX_CHUNK_CHARS) {
-      chunks.push({ text: sec.text.slice(i, i + MAX_CHUNK_CHARS), start: sec.start + i });
+    let i = 0;
+    while (i < sec.text.length) {
+      let end = Math.min(i + MAX_CHUNK_CHARS, sec.text.length);
+      if (end < sec.text.length) {
+        const para = sec.text.lastIndexOf('\n\n', end);
+        const line = sec.text.lastIndexOf('\n', end);
+        const cut = para > i + MAX_CHUNK_CHARS / 2 ? para : line > i + MAX_CHUNK_CHARS / 2 ? line : end;
+        end = cut;
+      }
+      chunks.push({ text: sec.text.slice(i, end), start: sec.start + i });
+      i = end;
     }
   }
   return chunks.filter((c) => c.text.trim().length > 50);
@@ -506,6 +571,277 @@ function refinePage(task: ExtractedTask, pages: string[], first: number, last: n
   // Require half the words to land before trusting the refinement over the
   // section's own first page.
   return bestScore * 2 >= words.length ? bestPage : first;
+}
+
+// ---------------------------------------------------------------------------
+// Proof: find the inspector's exact words in the PDF (BENI-69)
+// ---------------------------------------------------------------------------
+
+/** Lower-case, punctuation-free, single-spaced — so line breaks and the PDF's
+    hyphenation can't stop an exact sentence from matching. */
+function normProof(s: string): string {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function fourGrams(words: string[]): Set<string> {
+  const out = new Set<string>();
+  for (let i = 0; i + 4 <= words.length; i++) out.add(words.slice(i, i + 4).join(' '));
+  return out;
+}
+
+/** Normalised text + 4-word phrases of every page, built once per report. */
+type ProofIndex = { norm: string[]; grams: Set<string>[] };
+
+function buildProofIndex(pages: string[]): ProofIndex {
+  const norm = pages.map(normProof);
+  return { norm, grams: norm.map((p) => fourGrams(p.split(' '))) };
+}
+
+/** A quote must match this closely to be SHOWN as the inspector's words. */
+const QUOTE_SHOW_SCORE = 0.85;
+/** ...and this closely to be trusted for the PAGE only. */
+const QUOTE_PAGE_SCORE = 0.6;
+
+/**
+ * Where does this quote appear, and how sure are we?
+ *
+ * Keyword scoring (refinePage) put the deck-railing finding on the gutter page
+ * of the founder's own report — page 5 instead of 8 — because both pages talk
+ * about the exterior. A verbatim sentence has no such ambiguity: it is on one
+ * page. Exact match first; failing that, the share of the quote's 4-word
+ * phrases found on a page, which survives line breaks and small OCR noise.
+ *
+ * Pages inside the finding's own chunk are preferred: summaries often repeat
+ * the body word for word, and the body page is where the photo is.
+ */
+function locateQuote(
+  quote: string | null | undefined,
+  index: ProofIndex,
+  first: number,
+  last: number,
+): { page: number; score: number; start?: number; end?: number } | null {
+  const nq = normProof(quote ?? '');
+  const words = nq.split(' ').filter(Boolean);
+  if (words.length < 5) return null;
+
+  const order: number[] = [];
+  for (let p = first; p <= last; p++) if (p >= 1 && p <= index.norm.length) order.push(p);
+  for (let p = 1; p <= index.norm.length; p++) if (!order.includes(p)) order.push(p);
+
+  for (const p of order) {
+    const at = index.norm[p - 1].indexOf(nq);
+    if (at >= 0) return { page: p, score: 1, start: at, end: at + nq.length };
+  }
+
+  const qGrams = fourGrams(words);
+  if (qGrams.size === 0) return null;
+  let best: { page: number; score: number } | null = null;
+  for (const p of order) {
+    let hit = 0;
+    for (const g of qGrams) if (index.grams[p - 1].has(g)) hit++;
+    const score = hit / qGrams.size;
+    if (!best || score > best.score) best = { page: p, score };
+  }
+  return best && best.score >= QUOTE_PAGE_SCORE ? best : null;
+}
+
+/**
+ * Is one quote just the recommendation that follows the other's observation?
+ *
+ * First live run: "There is a drain leak at the second floor bathroom." and
+ * "Recommend repair by a qualified plumber to prevent water damage..." came
+ * back as two tasks. They are consecutive sentences of one finding. The test
+ * is narrow on purpose — same page, touching (within a few characters), and
+ * one of them is a bare "Recommend..." sentence — so two genuinely separate
+ * findings that happen to sit next to each other are never merged.
+ */
+function isSplitFinding(a: ExtractedTask, b: ExtractedTask): boolean {
+  const qa = a.quoteAt, qb = b.quoteAt;
+  if (!qa || !qb || qa.page !== qb.page) return false;
+  const [first, second] = qa.start <= qb.start ? [a, b] : [b, a];
+  const gap = second.quoteAt!.start - first.quoteAt!.end;
+  if (gap < 0 || gap > 40) return false;
+  return /^\s*(i\s+)?recommend/i.test(second.quote ?? '');
+}
+
+/** How alike two quotes are (0..1) — the same sentence quoted twice is the
+    same finding, whatever titles the model gave it. */
+function quoteOverlap(a: string | null | undefined, b: string | null | undefined): number {
+  const na = normProof(a ?? ''), nb = normProof(b ?? '');
+  if (na.split(' ').length < 5 || nb.split(' ').length < 5) return 0;
+  if (na.includes(nb) || nb.includes(na)) return 1;
+  const ga = fourGrams(na.split(' ')), gb = fourGrams(nb.split(' '));
+  let shared = 0;
+  for (const g of ga) if (gb.has(g)) shared++;
+  return shared / Math.max(1, Math.min(ga.size, gb.size));
+}
+
+// ---------------------------------------------------------------------------
+// Inspection date (BENI-70)
+// ---------------------------------------------------------------------------
+
+const MONTHS: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12,
+};
+
+function isoOrNull(y: number, m: number, d: number): string | null {
+  if (!(y >= 1990 && m >= 1 && m <= 12 && d >= 1 && d <= 31)) return null;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (dt.getUTCMonth() !== m - 1) return null;                 // 31 Feb etc.
+  if (dt.getTime() > Date.now() + 86_400_000) return null;       // not in the future
+  return dt.toISOString().slice(0, 10);
+}
+
+/** Parse the first date found at the START of `s`, in the formats inspection
+    software actually prints. Numeric d/m/y is read month-first (North America)
+    unless the first number cannot be a month. */
+function parseLeadingDate(s: string): string | null {
+  let m = s.match(/^\s*(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (m) return isoOrNull(+m[1], +m[2], +m[3]);
+  const monthOf = (word: string): number | undefined =>
+    MONTHS[word.slice(0, 4).toLowerCase()] ?? MONTHS[word.slice(0, 3).toLowerCase()];
+
+  // "Friday, December 28, 2018" / "Dec 28 2018"
+  m = s.match(/^\s*(?:[A-Za-z]+,?\s+)?([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})/);
+  if (m && monthOf(m[1])) return isoOrNull(+m[3], monthOf(m[1])!, +m[2]);
+
+  // "28 December 2018"
+  m = s.match(/^\s*(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\.?,?\s+(\d{4})/);
+  if (m && monthOf(m[2])) return isoOrNull(+m[3], monthOf(m[2])!, +m[1]);
+  m = s.match(/^\s*(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})/);
+  if (m) {
+    const y = m[3].length === 2 ? 2000 + +m[3] : +m[3];
+    const a = +m[1], b = +m[2];
+    return a > 12 ? isoOrNull(y, b, a) : isoOrNull(y, a, b);
+  }
+  return null;
+}
+
+const INSPECTION_DATE_LABEL =
+  /(inspection date|date of inspection|date inspected|inspected on|inspection performed on|date of service|service date|inspection on|\bdate)\s*[:\-–]?\s*/gi;
+
+/**
+ * Read the inspection date off the first pages of the report.
+ *
+ * Only LABELLED dates count ("Date: 2018-12-28", "Inspection Date: Dec 28,
+ * 2018"): a bare date on a cover page is as likely to be the print date or a
+ * licence expiry. Returns null when unsure — the confirm screen then asks
+ * the homeowner, which is better than guessing.
+ */
+function findInspectionDate(pages: string[]): { date: string; page: number } | null {
+  for (let p = 0; p < Math.min(3, pages.length); p++) {
+    const text = pages[p] ?? '';
+    INSPECTION_DATE_LABEL.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = INSPECTION_DATE_LABEL.exec(text)) !== null) {
+      const date = parseLeadingDate(text.slice(m.index + m[0].length, m.index + m[0].length + 40));
+      if (date) return { date, page: p + 1 };
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Scheduling, anchored to the inspection date (BENI-70)
+// ---------------------------------------------------------------------------
+
+type Freq = 'daily' | 'weekly' | 'monthly' | 'yearly';
+
+/** "Every 2 years" / "annually" / "every 3 months" -> a real schedule. */
+function parseRecurrenceText(text: string | null | undefined): { frequency: Freq; interval: number } | null {
+  if (!text) return null;
+  const t = text.toLowerCase();
+  const n = parseInt((t.match(/\d+/) ?? ['1'])[0], 10);
+  let interval = Number.isFinite(n) && n > 0 ? n : 1;
+  if (/twice a year|semi[- ]?annual|bi[- ]?annual/.test(t)) return { frequency: 'monthly', interval: 6 };
+  if (/quarter/.test(t)) return { frequency: 'monthly', interval: 3 };
+  if (/\bdai|\bday/.test(t)) return { frequency: 'daily', interval };
+  if (/week/.test(t)) return { frequency: 'weekly', interval };
+  if (/month/.test(t)) {
+    // "Every 12 months" reads better as yearly.
+    if (interval % 12 === 0) return { frequency: 'yearly', interval: interval / 12 };
+    return { frequency: 'monthly', interval };
+  }
+  if (/year|annual|season/.test(t)) return { frequency: 'yearly', interval: Math.min(interval, 25) };
+  return null;
+}
+
+function addDays(iso: string, days: number): string {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function addInterval(iso: string, f: Freq, n: number): string {
+  const d = new Date(iso + 'T00:00:00Z');
+  if (f === 'daily') d.setUTCDate(d.getUTCDate() + n);
+  else if (f === 'weekly') d.setUTCDate(d.getUTCDate() + 7 * n);
+  else if (f === 'monthly') d.setUTCMonth(d.getUTCMonth() + n);
+  else d.setUTCFullYear(d.getUTCFullYear() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
+/** When the report's own deadline has already passed, the job is due now —
+    you cannot do it in the past. How "now" depends on how much it matters. */
+function catchUpDays(severity: string | null): number {
+  return severity === 'critical' ? 14 : severity === 'moderate' ? 30 : 60;
+}
+
+/**
+ * Give every task its schedule, measured from the day the home was inspected.
+ *
+ *  - Jobs (action): inspection date + the window the report/catalog allows.
+ *    If that has already passed (an older report), due soon, flagged as
+ *    carried over so the homeowner can delete it if it's already done.
+ *  - Upkeep (routine): next occurrence after the inspection. "Every 2 years"
+ *    from a December 2018 inspection was due December 2020 — BENi has no
+ *    evidence it was done since, so it's due now, not silently skipped ahead.
+ *  - Notes: no date. They are not jobs.
+ *
+ * Without an inspection date we fall back to today, which is what the app did
+ * before — and the confirm screen asks the homeowner to fill the date in.
+ */
+function scheduleTasks(tasks: ExtractedTask[], inspectionDate: string | null): void {
+  const today = todayIso();
+  const base = inspectionDate ?? today;
+
+  for (const t of tasks) {
+    const cadence = parseRecurrenceText(t.recurrence);
+
+    if (t.taskKind === 'note' && !cadence) { t.dueDate = null; continue; }
+
+    // One definition (BENI-53): a task on a schedule is routine.
+    if (cadence || t.taskKind === 'routine') {
+      const c = cadence ?? { frequency: 'yearly' as Freq, interval: 1 };
+      t.taskKind = 'routine';
+      t.recurFrequency = c.frequency;
+      t.recurInterval = c.interval;
+      if (!t.recurrence) t.recurrence = c.interval === 1 ? 'Yearly' : `Every ${c.interval} years`;
+      const next = addInterval(base, c.frequency, c.interval);
+      if (next < today) {
+        t.dueDate = addDays(today, 30);
+        t.carriedOver = true;
+      } else {
+        t.dueDate = next;
+      }
+      t.dueWindowDays = null;
+      continue;
+    }
+
+    // A deadline the report actually printed wins over any window.
+    if (t.dueDate && /^\d{4}-\d{2}-\d{2}$/.test(t.dueDate)) continue;
+
+    const window = t.dueWindowDays ?? (t.severity === 'critical' ? 30 : t.severity === 'minor' ? 365 : 180);
+    const target = addDays(base, window);
+    if (target < today) {
+      t.dueDate = addDays(today, catchUpDays(t.severity));
+      t.carriedOver = true;
+    } else {
+      t.dueDate = target;
+    }
+  }
 }
 
 /**
@@ -601,6 +937,9 @@ async function extractFindings(report: PreparedReport, description: string): Pro
     console.log('No distinct summary section found in this report.');
   }
 
+  const proof = buildProofIndex(report.pages);
+  let quotesShown = 0, quotesPageOnly = 0, quotesMissed = 0;
+
   const perChunk = await Promise.all(
     chunks.map(async (chunk, i) => {
       const user = (description && i === 0 ? `Notes from the homeowner: ${description}\n\n` : '') + `Report section ${i + 1} of ${chunks.length}:\n\n${chunk.text}`;
@@ -620,7 +959,28 @@ async function extractFindings(report: PreparedReport, description: string): Pro
 
         for (const t of found) {
           if (!t) continue;
-          t.sourcePage = refinePage(t, report.pages, firstPage, lastPage);
+          // The inspector's own sentence decides the page when we can find it
+          // in the PDF; keyword scoring is only the fallback (BENI-69).
+          const located = locateQuote(t.quote, proof, firstPage, lastPage);
+          if (located) {
+            t.sourcePage = located.page;
+            t.quoteAt = located.start !== undefined
+              ? { page: located.page, start: located.start, end: located.end! }
+              : null;
+            if (located.score >= QUOTE_SHOW_SCORE) {
+              t.quote = String(t.quote).replace(/\s+/g, ' ').trim().slice(0, 700);
+              quotesShown++;
+            } else {
+              // Close enough to trust the page, not close enough to put the
+              // words in the inspector's mouth.
+              t.quote = null;
+              quotesPageOnly++;
+            }
+          } else {
+            t.sourcePage = refinePage(t, report.pages, firstPage, lastPage);
+            t.quote = null;
+            quotesMissed++;
+          }
           t.fromSummary = inSummary;
         }
         return found;
@@ -629,6 +989,11 @@ async function extractFindings(report: PreparedReport, description: string): Pro
         return [];
       }
     }),
+  );
+
+  console.log(
+    `Proof: ${quotesShown} verbatim quote(s) verified, ${quotesPageOnly} page-only, ` +
+    `${quotesMissed} not found (keyword page fallback).`,
   );
 
   // De-duplicate: the same finding can appear in overlapping slices.
@@ -858,16 +1223,23 @@ function absorb(keeper: ExtractedTask, other: ExtractedTask): void {
 
   const bodyPage = [keeper, other].find((t) => t.sourcePage && !t.fromSummary)?.sourcePage;
   const anyPage = keeper.sourcePage ?? other.sourcePage;
-  const severity = (SEVERITY_RANK[other.severity ?? ''] ?? 0) > (SEVERITY_RANK[keeper.severity ?? ''] ?? 0)
-    ? other.severity : keeper.severity;
+  const otherIsWorse = (SEVERITY_RANK[other.severity ?? ''] ?? 0) > (SEVERITY_RANK[keeper.severity ?? ''] ?? 0);
+  const severity = otherIsWorse ? other.severity : keeper.severity;
+  const severityReason = otherIsWorse ? (other.severityReason ?? keeper.severityReason) : (keeper.severityReason ?? other.severityReason);
   const withCatalog = keeper.catalogId ? keeper : other.catalogId ? other : null;
   const fromSummary = keeper.fromSummary || other.fromSummary;
+  // Proof survives a merge: prefer the verified quote from the report body.
+  const quote = [keeper, other].find((t) => t.quote && !t.fromSummary)?.quote ?? keeper.quote ?? other.quote ?? null;
+  const recurrence = keeper.recurrence ?? other.recurrence ?? null;
 
   if (detail(other) > detail(keeper)) Object.assign(keeper, other);
 
   keeper.sourcePage = bodyPage ?? anyPage ?? null;
   keeper.severity = severity;
+  keeper.severityReason = severityReason ?? null;
   keeper.fromSummary = fromSummary;
+  keeper.quote = quote;
+  keeper.recurrence = recurrence;
   if (!keeper.catalogId && withCatalog) {
     keeper.catalogId = withCatalog.catalogId;
     keeper.costMin = withCatalog.costMin;
@@ -945,8 +1317,28 @@ function mergeSameCatalogEntry(tasks: ExtractedTask[]): ExtractedTask[] {
     const tok = defectTokens(t.title || '');
     let absorbedBy = -1;
     for (let i = 0; i < survivors.length; i++) {
-      if ((survivors[i].system ?? '') !== (t.system ?? '')) continue;
+      // The same inspector sentence quoted twice is one finding — even if the
+      // model filed the copies under different systems or titles (BENI-69).
+      if (quoteOverlap(t.quote, survivors[i].quote) >= 0.8) { absorbedBy = i; break; }
+      if (isSplitFinding(t, survivors[i])) {
+        // Keep the whole finding as proof: observation, then recommendation.
+        const s = survivors[i];
+        const [a, b] = s.quoteAt!.start <= t.quoteAt!.start ? [s, t] : [t, s];
+        const joined = `${a.quote} ${b.quote}`;
+        const span = { page: a.quoteAt!.page, start: a.quoteAt!.start, end: b.quoteAt!.end };
+        absorb(s, t);
+        s.quote = joined;
+        s.quoteAt = span;
+        fuzzyMerged++;
+        absorbedBy = -2; // handled
+        break;
+      }
       const other = survivorTokens[i];
+      // Near-identical titles are one finding even when the model filed the
+      // copies under different systems ("Inspect garage roof after snow melt"
+      // came back under both roof_attic and exterior).
+      if (Math.min(tok.size, other.size) >= 3 && tokenOverlap(tok, other) >= 0.9) { absorbedBy = i; break; }
+      if ((survivors[i].system ?? '') !== (t.system ?? '')) continue;
       if (tokenOverlap(tok, other) >= DUPLICATE_THRESHOLD || containment(tok, other) >= CONTAINMENT_THRESHOLD) {
         absorbedBy = i;
         break;
@@ -955,10 +1347,11 @@ function mergeSameCatalogEntry(tasks: ExtractedTask[]): ExtractedTask[] {
     if (absorbedBy === -1) {
       survivors.push(t);
       survivorTokens.push(tok);
-    } else {
+    } else if (absorbedBy >= 0) {
       fuzzyMerged++;
       absorb(survivors[absorbedBy], t);
     }
+    // absorbedBy === -2: a split finding, already folded in above.
   }
 
   if (fuzzyMerged > 0) console.log(`Merged ${fuzzyMerged} near-duplicate finding(s) by word overlap.`);
@@ -995,20 +1388,21 @@ function inferSystem(t: ExtractedTask): (typeof HOME_SYSTEMS)[number] | null {
  * only 1 of 171 tasks had one. The catalog's urgency window is the real signal;
  * severity is the fallback when nothing matched.
  */
-function deriveDueDate(t: ExtractedTask, urgency: string | null | undefined): string | null {
-  if (t.dueDate) return t.dueDate;                   // the report actually said one
+/**
+ * How many days after the INSPECTION a job should be done (BENI-70).
+ *
+ * The catalog's urgency window when we have one, severity otherwise. This is
+ * only the window — scheduleTasks() turns it into a date measured from the
+ * inspection, not from the day the report happened to be uploaded.
+ */
+function windowDaysFor(urgency: string | null | undefined, severity: string | null): number {
   const u = (urgency ?? '').toLowerCase();
-  let days: number;
-  if (u.includes('immediate')) days = 7;
-  else if (u.includes('30-90')) days = 60;
-  else if (u.startsWith('before')) days = 90;
-  else if (u.includes('1-2 year')) days = 540;
-  else if (u.includes('annual') || u.includes('monitor')) days = 365;
-  else days = t.severity === 'critical' ? 30 : t.severity === 'minor' ? 365 : 180;
-
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  if (u.includes('immediate')) return 7;
+  if (u.includes('30-90')) return 60;
+  if (u.startsWith('before')) return 90;
+  if (u.includes('1-2 year')) return 540;
+  if (u.includes('annual') || u.includes('monitor')) return 365;
+  return severity === 'critical' ? 30 : severity === 'minor' ? 365 : 180;
 }
 
 /**
@@ -1082,7 +1476,9 @@ const SAFETY_CRITICAL: [RegExp, string][] = [
   [/\b(missing|no|absent|inoperative|expired)\b.*\b(smoke alarm|smoke detector|carbon monoxide)\b/i, 'alarms'],
   [/\b(exposed|open|live|energi[sz]ed)\b.*\b(wir|conductor|splice|junction|knockout|bus bar)/i, 'exposed wiring'],
   [/\b(double[- ]?tap|double[- ]?lug|federal pacific|stab[- ]?lok|zinsco|aluminum wiring|knob and tube)\b/i, 'panel hazard'],
-  [/\b(scorch|burn(ed|t)? mark|arc(ing)?|melted|overheat)/i, 'electrical heat'],
+  // "Melted" only near something electrical — the first live run flagged
+  // "once the snow has melted off the roof" as a fire risk.
+  [/\b(scorch|burn(ed|t)? mark|arcing|overheat)|\b(wire|wiring|insulation|outlet|receptacle|breaker|panel|cover plate)\b[^.]{0,30}\bmelted\b|\bmelted\b[^.]{0,30}\b(wire|wiring|insulation|outlet|receptacle|breaker|panel)\b/i, 'electrical heat'],
   [/\b(missing|no|absent|loose|inadequate)\b.*\b(handrail|guardrail|guard rail|railing|baluster)\b/i, 'fall hazard'],
   [/\b(trip hazard|fall hazard|safety hazard|fire hazard|shock hazard|electrocution)\b/i, 'stated hazard'],
   [/\bgfci\b.*\b(missing|absent|not present|required|no protection)\b/i, 'GFCI'],
@@ -1111,33 +1507,116 @@ const SAFETY_CRITICAL: [RegExp, string][] = [
   [/\b(joist|beam|post|column|ledger|sill|stair|step|deck(ing)?|support|framing|truss|rafter)\b[^.]{0,40}\b(rot|rotten|rotting)\b/i, 'structural rot'],
 ];
 
+/** What each trigger means to a homeowner — shown next to the severity. */
+const HAZARD_REASON: Record<string, string> = {
+  'gas': 'Gas leak — risk to people',
+  'CO': 'Carbon monoxide protection missing',
+  'alarms': 'Smoke or CO alarms missing or not working',
+  'exposed wiring': 'Exposed wiring — shock and fire risk',
+  'panel hazard': 'Known electrical panel hazard — fire risk',
+  'electrical heat': 'Signs of overheating — fire risk',
+  'fall hazard': 'Fall hazard',
+  'stated hazard': 'The inspector calls it a hazard',
+  'GFCI': 'Missing shock protection (GFCI)',
+  'combustion': 'Combustion venting failure — CO risk',
+  'venting': 'Improper venting — CO risk',
+  'door safety': 'Garage door safety reverse not working',
+  'active leak': 'Active leak — water damage and mould risk',
+  'leak': 'Active leak — water damage and mould risk',
+  'water intrusion': 'Water getting into the home',
+  'sewage': 'Sewage problem — health risk',
+  'mould': 'Mould — health risk and spreading damage',
+  'burst pipe': 'Burst pipe — water damage',
+  'movement': 'Structural movement',
+  'structural': 'Structural concern',
+  'structural rot': 'Rot in a part that holds weight',
+  'urgent': 'The report says to do this as soon as possible',
+  'sewer line': 'Main sewer line risk — very expensive if it fails',
+};
+
 /**
- * Returns the reason this finding is a safety matter, or null.
- * Matches on the full text, not just the title — inspectors put the dangerous
- * part in the description more often than in the heading.
+ * Founder's rule (2026-11-25): "Anything that's a leak, in my mind, is
+ * critical." A leak the inspector OBSERVED — not advice to check for one.
+ * "Check under sinks for leaks" and "no leaks noted" must not trip it.
+ */
+function isObservedLeak(text: string): boolean {
+  // A WATER leak, in the same sentence as something that carries water.
+  // First live run: "current leakage" (a GFCI finding) and "warm air leaking"
+  // (a disconnected dryer vent) both came out as "active leak".
+  const WATERY = '(water|drain|pipe|plumbing|faucet|sink|toilet|tub|shower|tank|heater|roof|supply line|valve|fitting|trap|hose|ceiling|ice dam)';
+  const near = new RegExp(`\\b${WATERY}\\b[^.]{0,50}\\bleak(s|ing|age|ed)?\\b|\\bleak(s|ing|age|ed)?\\b[^.]{0,50}\\b${WATERY}\\b`, 'i');
+  if (!near.test(text)) return false;
+  if (/\b(air|current|gas)\s+leak/i.test(text) && !/\bwater\b[^.]{0,30}\bleak|\bleak\w*\b[^.]{0,30}\bwater\b/i.test(text)) return false;
+  if (/\b(no|without)\s+(visible\s+|active\s+|signs? of\s+)?leak/i.test(text)) return false;
+  if (/\b(check|inspect|monitor|test|look|watch|leak detection|smart water)\w*\b[^.]{0,25}\bleak/i.test(text)) return false;
+  return true;
+}
+
+/**
+ * Returns the reason this finding is critical, or null.
+ * Matches on the inspector's quote as well as our fields — the dangerous part
+ * is in the inspector's sentence more often than in any title.
  */
 function safetyReason(task: ExtractedTask): string | null {
-  const text = [task.title, task.issue, task.fixRecommendation, task.location]
-    .filter(Boolean)
-    .join(' ');
+  // Judge on what the INSPECTOR said. When we have his verified words, use
+  // only those and the title: `issue` is often the cost catalog's generic
+  // homeowner text — on the founder's report a tree-trimming row ("Roots can
+  // also reach the sewer line") made "trim branches near the electrical
+  // service" critical for a sewer risk the inspector never mentioned.
+  const text = (task.quote
+    ? [task.quote, task.title]
+    : [task.title, task.issue, task.fixRecommendation, task.location]
+  ).filter(Boolean).join(' ');
+
+  // The hazard has to be in what the inspector OBSERVED, not in the
+  // consequence he is warning about. "Repair the stucco to prevent water
+  // intrusion" is preventive advice (moderate, per the founder's rubric);
+  // "water is entering at the window" is critical. Tested on the founder's own
+  // report: without this, the stucco finding came out critical.
+  // Consequence language ("...can cause rot", "...which may lead to water
+  // intrusion") describes what COULD happen; strip it before testing.
+  const observed = text.replace(
+    /\b(to\s+)?(prevent|avoid|reduce|minimi[sz]e|possible|potential|risk of|could|may|can|might|will|would|lead(s)? to|result(s)? in|cause[sd]?)\b[^.]{0,70}/gi,
+    ' ',
+  );
+
+  if (/\b(as soon as possible|asap|immediately|immediate (attention|repair)|urgent(ly)?)\b/i.test(text)) {
+    return HAZARD_REASON.urgent;
+  }
+  // A leak first: it is the most specific reason ("mould" is its consequence).
+  if (isObservedLeak(observed)) return HAZARD_REASON.leak;
   for (const [rx, label] of SAFETY_CRITICAL) {
-    if (rx.test(text)) return label;
+    if (rx.test(observed)) return HAZARD_REASON[label] ?? label;
+  }
+  // "Tree roots COULD grow into the main drain" is still the founder's
+  // textbook critical — the risk itself is the finding — so test the full text.
+  // Tree roots only count when a drain or sewer is in the same finding: the
+  // first live run flagged "trim the trees near the electrical service".
+  if (/\b(main (drain|sewer|waste|line)|sewer (line|lateral)|main line plumbing|waste line)\b/i.test(text) ||
+      (/\btree roots?\b/i.test(text) && /\b(drain|sewer|waste line|main line)\b/i.test(text))) {
+    return HAZARD_REASON['sewer line'];
   }
   return null;
 }
 
+const rankOf = (s: string | null | undefined) => SEVERITY_RANK[s ?? ''] ?? 0;
+
 /**
- * Only real jobs get a deadline.
+ * Apply the safety triggers LAST, after every other source has had its say.
  *
- * A due date on "replace the filters routinely" or "obtain your warranties" is
- * a lie — neither is ever "done" — and dated non-jobs are what fill the
- * notification bell with things the homeowner cannot act on today.
- *
- * This must run AFTER deriveDueDate, not before: deriveDueDate is called on
- * both the matched and unmatched paths and would simply put a date back.
+ * It used to run before the catalog merge, and the merge then overwrote the
+ * severity with the catalog's — so a leak the rule had just raised to
+ * critical was put back to moderate whenever it matched a catalog entry. The
+ * founder spotted exactly that on his own report. Only ever raises.
  */
-function undated(task: ExtractedTask, proposed: string | null): string | null {
-  return task.taskKind === 'action' ? proposed : null;
+function applySafety(t: ExtractedTask): ExtractedTask {
+  const hazard = safetyReason(t);
+  if (!hazard) return t;
+  if (t.severity !== 'critical') {
+    console.log(`Raised "${t.title}" to critical (${hazard}).`);
+    return { ...t, severity: 'critical', severityReason: hazard, safetyReason: hazard };
+  }
+  return { ...t, safetyReason: hazard, severityReason: t.severityReason ?? hazard };
 }
 
 function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogRow>): ExtractedTask[] {
@@ -1147,45 +1626,35 @@ function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogR
       const cid = str(t.catalogId);
       const match = cid ? catalog.get(cid) : undefined;
       const base: ExtractedTask = {
-      title: t.title.trim().slice(0, 200),
-      dueDate: /^\d{4}-\d{2}-\d{2}$/.test(String(t.dueDate ?? '')) ? String(t.dueDate) : null,
-      system: (HOME_SYSTEMS as readonly string[]).includes(String(t.system)) ? t.system : null,
-      severity: (SEVERITIES as readonly string[]).includes(String(t.severity)) ? t.severity : null,
-      location: str(t.location),
-      issue: str(t.issue),
-      fixRecommendation: str(t.fixRecommendation),
-      costMin: asInt(t.costMin),
-      costMax: asInt(t.costMax),
-      timingNote: str(t.timingNote),
-      recurrence: str(t.recurrence),
-      catalogId: match ? match.id : null,   // drop hallucinated ids
-      sourcePage: Number.isInteger(t.sourcePage) && (t.sourcePage as number) > 0 ? t.sourcePage : null,
-      // Unmatched findings keep null: the price is then the model's own guess,
-      // which the UI labels more cautiously than any catalog figure.
-      costConfidence: null,
-      taskKind: classifyTaskKind(t.title ?? '', t.issue ?? null),
-      fromSummary: t.fromSummary === true,
+        title: t.title.trim().slice(0, 200),
+        dueDate: /^\d{4}-\d{2}-\d{2}$/.test(String(t.dueDate ?? '')) ? String(t.dueDate) : null,
+        system: (HOME_SYSTEMS as readonly string[]).includes(String(t.system)) ? t.system : null,
+        severity: (SEVERITIES as readonly string[]).includes(String(t.severity)) ? t.severity : null,
+        location: str(t.location),
+        issue: str(t.issue),
+        fixRecommendation: str(t.fixRecommendation),
+        costMin: asInt(t.costMin),
+        costMax: asInt(t.costMax),
+        timingNote: str(t.timingNote),
+        recurrence: str(t.recurrence),
+        catalogId: match ? match.id : null,   // drop hallucinated ids
+        sourcePage: Number.isInteger(t.sourcePage) && (t.sourcePage as number) > 0 ? t.sourcePage : null,
+        // Unmatched findings keep null: the price is then the model's own guess,
+        // which the UI labels more cautiously than any catalog figure.
+        costConfidence: null,
+        taskKind: classifyTaskKind(t.title ?? '', t.issue ?? null),
+        fromSummary: t.fromSummary === true,
+        quote: str(t.quote),
+        severityReason: str(t.severityReason),
+        dueWindowDays: null,
       };
-
 
       // Never leave a task uncategorised - it would vanish from the score.
       if (!base.system) base.system = inferSystem(t);
 
-      // Safety overrides urgency. The catalog rates a missing deck handrail by
-      // how fast the wood is deteriorating; a homeowner rates it by whether
-      // someone falls off the deck. Only ever raises, never demotes.
-      const hazard = safetyReason(base);
-      if (hazard && base.severity !== 'critical') {
-        console.log(`Raised "${base.title}" to critical (${hazard}).`);
-        base.severity = 'critical';
-        base.safetyReason = hazard;
-      } else if (hazard) {
-        base.safetyReason = hazard;
-      }
-
       if (!match) {
-        base.dueDate = undated(base, deriveDueDate(base, null));
-        return base;
+        base.dueWindowDays = windowDaysFor(null, base.severity);
+        return applySafety(base);
       }
 
       // Magnitude sanity check. The model estimated a cost itself in stage 1;
@@ -1198,18 +1667,29 @@ function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogR
           `Rejected match ${match.id} for "${base.title}": catalog $${match.cost_high} ` +
           `vs model estimate $${ownMax} (>5x).`,
         );
-        return base;
+        base.catalogId = null;
+        base.dueWindowDays = windowDaysFor(null, base.severity);
+        return applySafety(base);
       }
 
-      // Researched catalog values win over the model's guesses.
-      return {
+      // The catalog's severity can RAISE the inspector-based judgement, never
+      // lower it: the model applied the founder's rubric to the inspector's
+      // own words, and a generic catalog row should not talk a leak down.
+      const catalogSeverity = (SEVERITIES as readonly string[]).includes(String(match.severity))
+        ? (match.severity as ExtractedTask['severity'])
+        : null;
+      const raisedByCatalog = rankOf(catalogSeverity) > rankOf(base.severity);
+
+      // Researched catalog values win over the model's guesses for COST.
+      return applySafety({
         ...base,
         system: (HOME_SYSTEMS as readonly string[]).includes(match.system)
           ? (match.system as ExtractedTask['system'])
           : base.system,
-        severity: (SEVERITIES as readonly string[]).includes(String(match.severity))
-          ? (match.severity as ExtractedTask['severity'])
-          : base.severity,
+        severity: raisedByCatalog ? catalogSeverity : base.severity,
+        severityReason: raisedByCatalog && match.urgency
+          ? `Typical timeframe for this repair: ${match.urgency}`
+          : base.severityReason,
         costMin: match.cost_low ?? base.costMin,
         costMax: match.cost_high ?? base.costMax,
         location: base.location ?? match.location,
@@ -1217,8 +1697,8 @@ function sanitizeAndEnrich(tasks: ExtractedTask[], catalog: Map<string, CatalogR
         issue: match.meaning ?? base.issue,
         costConfidence: match.confidence ?? null,
         timingNote: base.timingNote ?? (match.urgency ? `Typical timeframe: ${match.urgency}` : null),
-        dueDate: undated(base, deriveDueDate(base, match.urgency)),
-      };
+        dueWindowDays: windowDaysFor(match.urgency, raisedByCatalog ? catalogSeverity : base.severity),
+      });
     });
 }
 
@@ -1407,9 +1887,37 @@ Deno.serve(async (req: Request) => {
     const { description = '', file_path: filePath } = body;
     if (!filePath) throw new Error('file_path is required');
 
-    // Service-role client: needed to read the private user_files bucket.
-    // NOTE: verify_jwt is enabled on this function, so only signed-in users
-    // reach this code path.
+    // WHO is asking, and is it THEIR report? (BENI-74)
+    //
+    // verify_jwt only proves the request carries a valid Supabase token — and
+    // the public anon key IS one. Combined with the service-role download
+    // below, anyone holding the app's public key could ask for any user's
+    // report by path. Found while preparing for a partner's technical review
+    // (2026-11-25). Now the caller must be a signed-in user, and every upload
+    // lives under `<their user id>/...`, so the path must start with theirs.
+    const authHeader = req.headers.get('Authorization') ?? '';
+    const asCaller = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_ANON_KEY')!,
+      { global: { headers: { Authorization: authHeader } } },
+    );
+    const { data: auth } = await asCaller.auth.getUser();
+    if (!auth?.user) {
+      return new Response(JSON.stringify({ error: 'Please sign in again to process a report.' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    if (!String(filePath).startsWith(`${auth.user.id}/`)) {
+      console.error(`Refused: user ${auth.user.id} asked for a file outside their folder.`);
+      return new Response(JSON.stringify({ error: 'That report does not belong to this account.' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Service-role client: needed to read the private user_files bucket —
+    // only reached once the caller is known to own the file.
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
@@ -1497,6 +2005,16 @@ Deno.serve(async (req: Request) => {
     const adopted = adoptCadence(tasks, bankRows ?? []);
     if (adopted > 0) console.log(`Gave ${adopted} routine finding(s) a real cadence from the bank.`);
 
+    // Every date is measured from the day the home was inspected, not the day
+    // the PDF happened to be uploaded (BENI-70).
+    const inspection = findInspectionDate(report.pages);
+    console.log(
+      inspection
+        ? `Inspection date ${inspection.date} (page ${inspection.page}).`
+        : 'No labelled inspection date found — the homeowner will be asked.',
+    );
+    scheduleTasks(tasks, inspection?.date ?? null);
+
     // Fold this report into the shared library. Nothing reads it yet — the
     // point is that it fills itself on every upload, so the statistics exist
     // by the time there are enough reports for them to mean something. The
@@ -1532,7 +2050,15 @@ Deno.serve(async (req: Request) => {
     );
 
     mark('TOTAL', t0);
-    return new Response(JSON.stringify({ tasks }), {
+    const critical = tasks.filter((t) => t.severity === 'critical').length;
+    const quoted = tasks.filter((t) => t.quote).length;
+    console.log(`Severity: ${critical} critical. Proof: ${quoted}/${tasks.length} tasks carry a verified quote.`);
+
+    return new Response(JSON.stringify({
+      tasks,
+      inspectionDate: inspection?.date ?? null,
+      inspectionDatePage: inspection?.page ?? null,
+    }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (err) {

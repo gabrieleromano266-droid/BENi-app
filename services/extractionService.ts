@@ -30,20 +30,41 @@ export type ExtractedTask = {
   taskKind: TaskKind | null;
   /** Came from the inspector's summary section */
   fromSummary: boolean;
+  /** The inspector's exact words, verified against the PDF (null if not verifiable) */
+  quote?: string | null;
+  /** Plain-English reason for the severity */
+  severityReason?: string | null;
+  /** Real schedule, parsed server-side from `recurrence` */
+  recurFrequency?: 'daily' | 'weekly' | 'monthly' | 'yearly' | null;
+  recurInterval?: number | null;
+  /** Days after the inspection the report allows (for re-dating on the confirm screen) */
+  dueWindowDays?: number | null;
+  /** The report's own deadline had passed by the time it was uploaded */
+  carriedOver?: boolean;
+};
+
+/** What one extraction returns: the findings, plus the date the home was inspected. */
+export type ExtractionResult = {
+  tasks: ExtractedTask[];
+  /** YYYY-MM-DD read from the report, or null if it doesn't state one clearly */
+  inspectionDate: string | null;
+  inspectionDatePage: number | null;
 };
 
 /**
  * Calls the ExtractTasksUsingLLM Supabase Edge Function.
  *
  * Sends the storage path of an uploaded inspection report and returns the
- * AI-extracted maintenance tasks.
+ * AI-extracted maintenance tasks, plus the inspection date it found.
  */
 export async function extractTasks(
   description: string,
   filePath: string,
-): Promise<ExtractedTask[]> {
+): Promise<ExtractionResult> {
   const { data, error } = await supabase.functions.invoke<{
     tasks?: ExtractedTask[];
+    inspectionDate?: string | null;
+    inspectionDatePage?: number | null;
     error?: string;
   }>('ExtractTasksUsingLLM', {
     body: { description, file_path: filePath },
@@ -70,5 +91,9 @@ export async function extractTasks(
 
   if (data?.error) throw new Error(data.error);
 
-  return data?.tasks ?? [];
+  return {
+    tasks: data?.tasks ?? [],
+    inspectionDate: data?.inspectionDate ?? null,
+    inspectionDatePage: data?.inspectionDatePage ?? null,
+  };
 }

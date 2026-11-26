@@ -42,6 +42,9 @@ export function dbTaskToTaskType(t: DBTask): TaskType {
     fileId: t.file_id,
     recurFrequency: t.recur_frequency,
     recurAnchor: t.recur_anchor,
+    // Without this an "every 2 years" task, opened and saved, became yearly:
+    // the save writes recurInterval ?? 1.
+    recurInterval: t.recur_interval ?? 1,
     system: t.system,
     severity: t.severity,
     location: t.location,
@@ -50,6 +53,14 @@ export function dbTaskToTaskType(t: DBTask): TaskType {
     costMin: t.cost_min,
     costMax: t.cost_max,
     timingNote: t.timing_note,
+    recurrence: t.recurrence,
+    catalogId: t.catalog_id ?? null,
+    sourcePage: t.source_page ?? null,
+    costConfidence: t.cost_confidence ?? null,
+    taskKind: t.task_kind ?? null,
+    fromSummary: t.from_summary ?? null,
+    sourceQuote: t.source_quote ?? null,
+    severityReason: t.severity_reason ?? null,
   };
 }
 

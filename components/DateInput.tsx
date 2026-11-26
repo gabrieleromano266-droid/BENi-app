@@ -8,9 +8,11 @@ import { useTheme } from '@/theme/ThemeContext';
 type Props = {
   value: Date | null;
   onChange: (date: Date | null) => void;
+  /** Shown when empty. Defaults to "Due date (optional)". */
+  placeholder?: string;
 };
 
-export function DateInput({ value, onChange }: Props) {
+export function DateInput({ value, onChange, placeholder = 'Due date (optional)' }: Props) {
   const { colors } = useTheme();
   const [visible, setVisible] = useState(false);
 
@@ -25,7 +27,7 @@ export function DateInput({ value, onChange }: Props) {
       >
         <MaterialIcons name="calendar-today" size={14} color={colors.textMuted} />
         <Text style={[styles.dateText, { color: value ? colors.textPrimary : colors.inputPlaceholder }]}>
-          {value ? value.toISOString().split('T')[0] : 'Due date (optional)'}
+          {value ? value.toISOString().split('T')[0] : placeholder}
         </Text>
         {value && (
           <TouchableOpacity onPress={() => onChange(null)} hitSlop={8}>

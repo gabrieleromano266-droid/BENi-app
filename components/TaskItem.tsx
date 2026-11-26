@@ -1,5 +1,6 @@
 import Dropdown from '@/components/Dropdown';
-import { ANCHOR_OPTIONS, FREQ_OPTIONS } from '@/constants/recurrence';
+import { ANCHOR_OPTIONS, cadenceLabel, fromPresetKey, presetKey, presetOptions } from '@/constants/recurrence';
+import { taskTone, toneColor, TONE_LABEL } from '@/utils/severityStyle';
 import { usePropertyFiles } from '@/hooks/usePropertyFiles';
 import { useTheme } from '@/theme/ThemeContext';
 import { fontSize, radius, spacing } from '@/theme/tokens';
@@ -27,13 +28,6 @@ type TaskItemProps = {
   files?: FileRecord[];
 };
 
-function getUrgencyColor(dueDate: Date | null, colors: ReturnType<typeof useTheme>['colors']): string {
-  if (!dueDate) return colors.urgencyNone;
-  const days = Math.ceil((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-  if (days < 0) return colors.urgencyPast;
-  if (days <= 30) return colors.urgencyMonth;
-  return colors.urgencyFuture;
-}
 
 export default function TaskItem({
   task,
@@ -56,6 +50,7 @@ export default function TaskItem({
   const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(task.propertyId ?? null);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(task.fileId ?? null);
   const [recurFrequency, setRecurFrequency] = useState<RecurFrequency | null>(task.recurFrequency ?? null);
+  const [recurInterval, setRecurInterval] = useState<number>(task.recurInterval ?? 1);
   const [recurAnchor, setRecurAnchor] = useState<RecurAnchor>(task.recurAnchor ?? 'completion');
 
   const availableFiles = usePropertyFiles(
@@ -65,6 +60,9 @@ export default function TaskItem({
     () => setSelectedFileId(null),
   );
 
+  const tone = taskTone(task);
+  const cadence = cadenceLabel(task.recurFrequency, task.recurInterval);
+
   useEffect(() => {
     setTitle(task.title);
     setDescription(task.description || '');
@@ -72,6 +70,7 @@ export default function TaskItem({
     setSelectedPropertyId(task.propertyId ?? null);
     setSelectedFileId(task.fileId ?? null);
     setRecurFrequency(task.recurFrequency ?? null);
+    setRecurInterval(task.recurInterval ?? 1);
     setRecurAnchor(task.recurAnchor ?? 'completion');
   }, [task]);
 
@@ -88,7 +87,10 @@ export default function TaskItem({
       propertyId: selectedPropertyId,
       fileId: selectedFileId,
       recurFrequency,
+      recurInterval: recurFrequency ? recurInterval : null,
       recurAnchor: recurFrequency ? recurAnchor : null,
+      // A schedule makes it upkeep (one definition, BENI-53).
+      taskKind: recurFrequency ? 'routine' : task.taskKind === 'routine' ? 'action' : task.taskKind,
     });
     setEditing(false);
   };
@@ -100,6 +102,7 @@ export default function TaskItem({
     setSelectedPropertyId(task.propertyId ?? null);
     setSelectedFileId(task.fileId ?? null);
     setRecurFrequency(task.recurFrequency ?? null);
+    setRecurInterval(task.recurInterval ?? 1);
     setRecurAnchor(task.recurAnchor ?? 'completion');
     setEditing(false);
   };
@@ -184,9 +187,13 @@ export default function TaskItem({
             )}
           </View>
           <Dropdown
-            options={FREQ_OPTIONS}
-            selected={recurFrequency}
-            onSelect={(v) => setRecurFrequency(v as RecurFrequency | null)}
+            options={presetOptions(recurFrequency, recurInterval)}
+            selected={presetKey(recurFrequency, recurInterval)}
+            onSelect={(v) => {
+              const p = fromPresetKey(v as string | null);
+              setRecurFrequency(p?.frequency ?? null);
+              setRecurInterval(p?.interval ?? 1);
+            }}
             placeholder="No recurrence"
             size="sm"
           />
@@ -226,14 +233,23 @@ export default function TaskItem({
               {selected && <MaterialIcons name="check" size={12} color={colors.textInverse} />}
             </View>
           ) : (
-            <View style={[styles.urgencyDot, { backgroundColor: getUrgencyColor(dueDate, colors) }]} />
+            <View style={[styles.urgencyDot, { backgroundColor: toneColor(tone, colors) }]} />
           )}
 
           <View style={styles.content}>
             <Text style={[styles.taskTitle, { color: colors.textPrimary }]}>{task.title}</Text>
+            {/* Severity and the reason for it, in words — the accountability
+                layer: nobody should approve "Critical" without seeing why. */}
+            {tone !== 'none' && (
+              <Text style={[styles.reason, { color: toneColor(tone, colors) }]} numberOfLines={2}>
+                {TONE_LABEL[tone]}
+                {tone === 'routine' && cadence ? ` · ${cadence}` : ''}
+                {task.severityReason && tone !== 'routine' ? ` · ${task.severityReason}` : ''}
+              </Text>
+            )}
             {task.description ? (
-              <Text style={[styles.taskDesc, { color: colors.textMuted }]} numberOfLines={1}>
-                {task.description}
+              <Text style={[styles.taskDesc, { color: colors.textMuted }]} numberOfLines={2}>
+                {task.sourceQuote && task.description === task.sourceQuote ? `“${task.description}”` : task.description}
               </Text>
             ) : null}
             <View style={styles.metaRow}>
@@ -254,6 +270,18 @@ export default function TaskItem({
                     <Text style={[styles.metaText, { color: colors.border }]}>·</Text>
                   )}
                   <MaterialIcons name="refresh" size={10} color={colors.info} />
+                </>
+              )}
+              {!!task.sourcePage && (
+                <>
+                  <Text style={[styles.metaText, { color: colors.border }]}>·</Text>
+                  <Text style={[styles.metaText, { color: colors.textDisabled }]}>Page {task.sourcePage}</Text>
+                </>
+              )}
+              {!!task.carriedOver && (
+                <>
+                  <Text style={[styles.metaText, { color: colors.border }]}>·</Text>
+                  <Text style={[styles.metaText, { color: colors.warning }]}>From an older report — still needed?</Text>
                 </>
               )}
             </View>
@@ -363,7 +391,13 @@ const styles = StyleSheet.create({
   },
   taskDesc: {
     fontSize: 12,
-    marginTop: 1,
+    marginTop: 2,
+    fontStyle: 'italic',
+  },
+  reason: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 2,
   },
   metaRow: {
     flexDirection: 'row',

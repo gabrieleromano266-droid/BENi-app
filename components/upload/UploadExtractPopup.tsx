@@ -1,5 +1,5 @@
 import { extractTasks } from '@/services/extractionService';
-import { uploadPropertyFile } from '@/services/fileService';
+import { notifyReportsChanged, uploadPropertyFile } from '@/services/fileService';
 import * as DocumentPicker from 'expo-document-picker';
 import { useEffect, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -37,6 +37,8 @@ export default function UploadExtractPopup({ visible, userId, onClose, onSuccess
   const [desc, setDesc] = useState('');
   const [selectedProperty, setSelectedProperty] = useState<string | null>(initialPropertyId ?? null);
   const [extractedTasks, setExtractedTasks] = useState<TaskType[]>([]);
+  const [inspectionDate, setInspectionDate] = useState<string | null>(null);
+  const [inspectionDatePage, setInspectionDatePage] = useState<number | null>(null);
   const [showTaskPopup, setShowTaskPopup] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -95,13 +97,15 @@ export default function UploadExtractPopup({ visible, userId, onClose, onSuccess
       );
       setFileId(id);
       setUploading(false);
+      // The report exists now — let the nav stop nagging for one.
+      notifyReportsChanged();
 
       setExtracting(true);
-      const rawTasks = await extractTasks(
+      const result = await extractTasks(
         desc !== '' ? desc : 'No additional description, just the file',
         filePath,
       );
-      const tasks: TaskType[] = rawTasks.map((task) => {
+      const tasks: TaskType[] = result.tasks.map(({ quote, ...task }) => {
         let dueDate: Date | null = null;
         if (task.dueDate) {
           const [year, month, day] = task.dueDate.split('-').map(Number);
@@ -109,8 +113,18 @@ export default function UploadExtractPopup({ visible, userId, onClose, onSuccess
             dueDate = new Date(year, month - 1, day);
           }
         }
-        return { ...task, dueDate };
+        return {
+          ...task,
+          dueDate,
+          // The inspector's own sentence is the description (founder's ask),
+          // and is ALSO kept separately as proof the homeowner can't edit away.
+          description: quote ?? undefined,
+          sourceQuote: quote ?? null,
+          recurAnchor: task.recurFrequency ? 'due_date' : null,
+        };
       });
+      setInspectionDate(result.inspectionDate);
+      setInspectionDatePage(result.inspectionDatePage);
       setExtractedTasks(tasks);
     } catch (err: any) {
       setError(err?.message ?? 'Failed to process file. Please try again.');
@@ -201,6 +215,8 @@ export default function UploadExtractPopup({ visible, userId, onClose, onSuccess
           userId={userId}
           propertyId={selectedProperty ?? undefined}
           fileId={fileId}
+          inspectionDate={inspectionDate}
+          inspectionDatePage={inspectionDatePage}
           onClose={(saved) => {
             setShowTaskPopup(false);
             setExtractedTasks([]);

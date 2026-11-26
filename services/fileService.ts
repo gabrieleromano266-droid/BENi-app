@@ -218,6 +218,52 @@ export async function downloadFile(filePath: string, fileName: string): Promise<
  * than fetching rows, because the answer is a single boolean and the sidebar
  * renders on every screen.
  */
+/**
+ * "A report was just uploaded" — so the gold Upload Report button can turn
+ * off straight away. It used to re-check only when the page changed, so right
+ * after an upload it still looked like the job wasn't done.
+ */
+const reportListeners = new Set<() => void>();
+
+export function onReportsChanged(listener: () => void): () => void {
+  reportListeners.add(listener);
+  return () => { reportListeners.delete(listener); };
+}
+
+export function notifyReportsChanged(): void {
+  reportListeners.forEach((listener) => {
+    try { listener(); } catch (err) { console.error('report listener failed:', err); }
+  });
+}
+
+/**
+ * Remember when the home was inspected (BENI-70): on the report itself, and
+ * on the property when it's newer than what we had. Best-effort — a failure
+ * here must never lose the tasks the homeowner just confirmed.
+ */
+export async function saveInspectionDate(
+  fileId: string | undefined,
+  propertyId: string | undefined,
+  inspectionDate: string | null,
+): Promise<void> {
+  if (!inspectionDate) return;
+  try {
+    if (fileId) {
+      await supabase.from('files').update({ inspection_date: inspectionDate }).eq('id', fileId);
+    }
+    if (propertyId) {
+      const { data } = await supabase
+        .from('properties').select('last_inspection_date').eq('id', propertyId).single();
+      const current = (data as { last_inspection_date: string | null } | null)?.last_inspection_date;
+      if (!current || current < inspectionDate) {
+        await supabase.from('properties').update({ last_inspection_date: inspectionDate }).eq('id', propertyId);
+      }
+    }
+  } catch (err) {
+    console.error('Could not save the inspection date (continuing):', err);
+  }
+}
+
 export async function hasAnyReport(userId: string): Promise<boolean> {
   const { count } = await supabase
     .from('files')

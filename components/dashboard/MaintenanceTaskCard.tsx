@@ -18,6 +18,9 @@ import { useState } from 'react';
 import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import IconButton from '../IconButton';
 import ReportPageViewer from '../ReportPageViewer';
+import LinkedText from '../LinkedText';
+import RecommendedPros from './RecommendedPros';
+import { tradeFor, wantsAPro } from '@/services/contractorService';
 
 type Props = {
   task: TaskRow;
@@ -41,6 +44,8 @@ const SEVERITY_BADGE: Record<TaskSeverity, { bg: keyof Colors; text: keyof Color
 
 function formatCost(min: number | null, max: number | null): string | null {
   if (min == null && max == null) return null;
+  // "$0 – $0" means "we don't know", not "free" — say nothing rather than that.
+  if (!min && !max) return null;
   if (min != null && max != null) return `$${min.toLocaleString()} – $${max.toLocaleString()}`;
   const only = (min ?? max)!;
   return `$${only.toLocaleString()}`;
@@ -90,6 +95,11 @@ export default function MaintenanceTaskCard({ task, showProperty, onComplete, on
   const cost = formatCost(task.cost_min, task.cost_max);
   const isMajorExpense = (task.cost_max ?? 0) >= MAJOR_EXPENSE_THRESHOLD;
   const doItBy = formatDoItBy(task.due_date, task.timing_note);
+
+  // The inspector's words and the fix decide whether a professional is wanted
+  // and which trade (BENI-73).
+  const proText = [task.source_quote, task.fix_recommendation, task.title].filter(Boolean).join(' ');
+  const showPros = task.task_kind !== 'note' && wantsAPro(proText);
 
   return (
     <View
@@ -175,6 +185,20 @@ export default function MaintenanceTaskCard({ task, showProperty, onComplete, on
 
       {open && (
         <View style={[styles.detail, { borderTopColor: colors.borderLight }]}>
+          {/* Proof first: the inspector's own sentence, verified against the
+              PDF, with any links he gave made tappable (BENI-69). */}
+          {!!task.source_quote && (
+            <View style={styles.detRow}>
+              <Text style={[styles.detLabel, { color: colors.textMuted }]}>Inspector wrote</Text>
+              <LinkedText
+                text={`“${task.source_quote}”`}
+                style={[styles.detValue, styles.quote, { color: colors.textSecondary }]}
+              />
+            </View>
+          )}
+          {!!task.severity && !!task.severity_reason && (
+            <DetailRow label={`Why ${task.severity}`} value={task.severity_reason} colors={colors} />
+          )}
           {!!task.location && <DetailRow label="Where" value={task.location} colors={colors} />}
           {!!task.issue && <DetailRow label="What it is" value={task.issue} colors={colors} />}
           {!!task.fix_recommendation && (
@@ -196,6 +220,8 @@ export default function MaintenanceTaskCard({ task, showProperty, onComplete, on
               colors={colors}
             />
           )}
+
+          {showPros && <RecommendedPros trade={tradeFor(proText, task.system)} />}
 
           <View style={styles.actions}>
             {canViewSource && (
@@ -236,6 +262,7 @@ export default function MaintenanceTaskCard({ task, showProperty, onComplete, on
           page={task.source_page ?? null}
           taskTitle={task.title}
           fileName={task.fileName || undefined}
+          highlight={task.source_quote ?? null}
           onClose={() => setViewerOpen(false)}
         />
       )}
@@ -262,6 +289,9 @@ function DetailRow({
 }
 
 const styles = StyleSheet.create({
+  quote: {
+    fontStyle: 'italic',
+  },
   card: {
     borderRadius: radius.md,
     borderWidth: 1,

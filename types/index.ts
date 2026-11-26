@@ -54,6 +54,15 @@ export type TaskType = {
   taskKind?: TaskKind | null;
   /** Came from the inspector's summary section — the part he chose to highlight */
   fromSummary?: boolean | null;
+  /** The inspector's exact words, verified against the PDF — the proof */
+  sourceQuote?: string | null;
+  /** Plain-English reason for the severity, e.g. "Active leak — water damage" */
+  severityReason?: string | null;
+  /** Days after the inspection the report allows. Only used on the confirm
+      screen, to re-date tasks if the homeowner corrects the inspection date. */
+  dueWindowDays?: number | null;
+  /** The report's own deadline had already passed at upload */
+  carriedOver?: boolean | null;
 };
 
 /** Raw DB row from the tasks table */
@@ -83,6 +92,8 @@ export type DBTask = {
   cost_confidence?: string | null;
   task_kind?: TaskKind | null;
   from_summary?: boolean | null;
+  source_quote?: string | null;
+  severity_reason?: string | null;
 };
 
 /** DBTask enriched with the property name (used on dashboard) */

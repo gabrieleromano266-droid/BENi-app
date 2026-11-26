@@ -31,7 +31,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { usePathname, useRouter } from 'expo-router';
 import UploadExtractPopup from '@/components/upload/UploadExtractPopup';
-import { hasAnyReport } from '@/services/fileService';
+import { hasAnyReport, onReportsChanged } from '@/services/fileService';
 import { supabase } from '@/services/supabase';
 import { useTheme } from '@/theme/ThemeContext';
 import { fontSize, radius, shadows, spacing } from '@/theme/tokens';
@@ -83,6 +83,15 @@ export default function MobileNavFan() {
       }
     });
   }, [pathname]);
+
+  // Re-check the moment a report is uploaded — not only on the next page
+  // change, which left "Upload Report" glowing right after an upload.
+  useEffect(() => onReportsChanged(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      const id = data.user?.id;
+      if (id) hasAnyReport(id).then((has) => setNeedsReport(!has)).catch(() => {});
+    });
+  }), []);
 
   const go = (path: string) => { setOpen(false); router.push(path as any); };
 
