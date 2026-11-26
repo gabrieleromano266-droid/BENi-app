@@ -1,5 +1,6 @@
 import AddTaskModal from '@/components/AddTaskModal';
 import Button from '@/components/Button';
+import { attachRecords } from '@/services/fileService';
 import CompleteTaskModal, { CompleteResult } from '@/components/CompleteTaskModal';
 import ConfirmDeleteModal from '@/components/ConfirmDeleteModal';
 import EmptyText from '@/components/EmptyText';
@@ -102,7 +103,9 @@ export default function MaintenanceScreen() {
 
   const handleCompleteTask = async (result: CompleteResult) => {
     if (!completingTask || !userId) return;
+    if (completingTask.completed_at) { setCompletingTask(null); return; }
     const nextTask = await completeTask(completingTask, userId, result.nextDueDate, result.newFrequency, result.newAnchor);
+    await attachRecords(userId, completingTask.id, completingTask.property_id, result.proofs);
     setAllTasks((prev) => {
       const without = prev.filter((t) => t.id !== completingTask.id);
       if (!nextTask) return without;

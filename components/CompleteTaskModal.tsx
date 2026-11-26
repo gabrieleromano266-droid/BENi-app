@@ -6,11 +6,13 @@ import { fontSize, radius, spacing } from '@/theme/tokens';
 import { RecurAnchor, RecurFrequency, TaskType } from '@/types';
 import * as DocumentPicker from 'expo-document-picker';
 import { FileUploadZone } from '@/components/upload/FileUploadZone';
+import { SingleLineInput } from '@/components/Inputs';
+import { PendingRecord } from '@/services/fileService';
 import { ANCHOR_OPTIONS, FREQ_LABELS, FREQ_OPTIONS } from '@/constants/recurrence';
 import { computeNextDueDate } from '@/utils/taskUtils';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export type CompleteResult = {
   nextDueDate: Date | null;
@@ -21,7 +23,7 @@ export type CompleteResult = {
    * truth that turns a "Medium confidence" cost estimate into a real Calgary
    * price. Throwing away the second and third file throws away that evidence.
    */
-  proofs?: { uri: string; name: string }[];
+  proofs?: PendingRecord[];
   newFrequency?: RecurFrequency | null;
   newAnchor?: RecurAnchor | null;
 };
@@ -36,7 +38,7 @@ type Props = {
 export default function CompleteTaskModal({ visible, task, onClose, onComplete }: Props) {
   // Proof of work: a receipt, invoice or before/after photo. Optional - never
   // block completing a task on having paperwork to hand.
-  const [proofs, setProofs] = useState<{ uri: string; name: string }[]>([]);
+  const [proofs, setProofs] = useState<PendingRecord[]>([]);
 
   useEffect(() => {
     if (!visible) setProofs([]);
@@ -60,6 +62,9 @@ export default function CompleteTaskModal({ visible, task, onClose, onComplete }
 
   const removeProof = (name: string) =>
     setProofs((prev) => prev.filter((p) => p.name !== name));
+
+  const titleProof = (name: string, title: string) =>
+    setProofs((prev) => prev.map((p) => (p.name === name ? { ...p, title } : p)));
 
   const { colors } = useTheme();
   const [clearRecur, setClearRecur] = useState(false);
@@ -113,6 +118,7 @@ export default function CompleteTaskModal({ visible, task, onClose, onComplete }
       >
         {/* Inner Pressable stops backdrop tap from dismissing when tapping inside */}
         <Pressable style={[styles.box, { backgroundColor: colors.surface }]}>
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
 
           {/* Header — icon and title in a row, aligned to center */}
           <View style={styles.header}>
@@ -188,20 +194,31 @@ export default function CompleteTaskModal({ visible, task, onClose, onComplete }
 
               {/* Optional proof of work. Kept last so it never gets in the way of
                   simply ticking something off. */}
+              <Text style={[styles.proofHeading, { color: colors.textPrimary }]}>
+                Keep a record <Text style={{ color: colors.textMuted, fontWeight: '400' }}>(optional)</Text>
+              </Text>
               <Text style={[styles.proofLabel, { color: colors.textMuted }]}>
-                Keep a record (optional) — receipts, invoices, before/after photos.
-                You can add as many as you like.
+                Receipts, invoices, before/after photos — add as many as you like.
               </Text>
 
               {proofs.map((p) => (
-                <View key={p.name} style={[styles.proofRow, { borderColor: colors.borderLight }]}>
-                  <MaterialIcons name="attach-file" size={16} color={colors.textMuted} />
-                  <Text style={[styles.proofName, { color: colors.textPrimary }]} numberOfLines={1}>
-                    {p.name}
-                  </Text>
-                  <Pressable onPress={() => removeProof(p.name)} hitSlop={8}>
-                    <MaterialIcons name="close" size={16} color={colors.textMuted} />
-                  </Pressable>
+                <View key={p.name} style={[styles.proofCard, { borderColor: colors.borderLight }]}>
+                  <View style={styles.proofRow}>
+                    <MaterialIcons name="attach-file" size={16} color={colors.textMuted} />
+                    <Text style={[styles.proofName, { color: colors.textMuted }]} numberOfLines={1}>
+                      {p.name}
+                    </Text>
+                    <Pressable onPress={() => removeProof(p.name)} hitSlop={8}>
+                      <MaterialIcons name="close" size={16} color={colors.textMuted} />
+                    </Pressable>
+                  </View>
+                  <SingleLineInput
+                    placeholderText="What is this? e.g. Plumber’s invoice"
+                    value={p.title ?? ''}
+                    onChangeText={(t) => titleProof(p.name, t)}
+                    maxLength={80}
+                    style={{ marginBottom: 0 }}
+                  />
                 </View>
               ))}
 
@@ -213,8 +230,8 @@ export default function CompleteTaskModal({ visible, task, onClose, onComplete }
                     prev.some((p) => p.name === f.name) ? prev : [...prev, { uri: f.uri, name: f.name }])
                 }
                 uploading={false}
-                hint="PDF or image — add as many as you need"
-                label={proofs.length > 0 ? `Add another (${proofs.length} attached)` : 'Record'}
+                hint={proofs.length > 0 ? `${proofs.length} attached — add another` : 'PDF or image'}
+                showNameField={false}
               />
 
               <View style={styles.btnGroup}>
@@ -232,6 +249,7 @@ export default function CompleteTaskModal({ visible, task, onClose, onComplete }
               </View>
             </>
           )}
+          </ScrollView>
         </Pressable>
       </Pressable>
     </Modal>
@@ -247,7 +265,8 @@ const styles = StyleSheet.create({
   },
   box: {
     width: '100%',
-    maxWidth: 320,
+    maxWidth: 380,
+    maxHeight: '92%',
     borderRadius: radius.xl,
     padding: spacing.lg + 4,
   },
@@ -293,23 +312,30 @@ const styles = StyleSheet.create({
   loader: {
     marginVertical: spacing.lg,
   },
+  proofCard: {
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+    marginBottom: spacing.sm,
+    gap: spacing.xs + 2,
+  },
   proofRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    borderWidth: 1,
-    borderRadius: radius.sm,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    marginBottom: spacing.sm,
   },
   proofName: {
     flex: 1,
+    fontSize: fontSize.xs,
+  },
+  proofHeading: {
     fontSize: fontSize.sm,
+    fontWeight: '600',
+    marginTop: spacing.md,
   },
   proofLabel: {
     fontSize: fontSize.sm,
-    marginBottom: spacing.xs,
+    marginBottom: spacing.sm,
   },
   btnGroup: {
     gap: spacing.sm,

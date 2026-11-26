@@ -20,7 +20,7 @@ import InfoPopup from '@/components/InfoPopup';
 import PageContainer from '@/components/PageContainer';
 import PageHeader from '@/components/PageHeader';
 import { SYSTEMS } from '@/constants/systems';
-import { uploadTaskDocument } from '@/services/fileService';
+import { attachRecords } from '@/services/fileService';
 import { fetchFirstName } from '@/services/profileService';
 import { fetchProperties } from '@/services/propertyService';
 import { supabase } from '@/services/supabase';
@@ -147,21 +147,9 @@ export default function DashboardScreen() {
 
   const handleCompleteTask = async (result: CompleteResult) => {
     if (!completingTask || !userId) return;
-    const completedId = completingTask.id;
-    const completedPropertyId = completingTask.property_id;
+    if (completingTask.completed_at) { setCompletingTask(null); return; }
     const nextTask = await completeTask(completingTask, userId, result.nextDueDate, result.newFrequency, result.newAnchor);
-
-    // Store the receipts/photos against the task we just closed. Uploaded one
-    // at a time and each guarded on its own, so a single bad file cannot lose
-    // the others -- or the completion itself, which is what the user actually
-    // asked for.
-    for (const proof of result.proofs ?? []) {
-      try {
-        await uploadTaskDocument(userId, completedId, completedPropertyId, proof.uri, proof.name);
-      } catch (err) {
-        console.error(`Could not attach "${proof.name}":`, err);
-      }
-    }
+    const failed = await attachRecords(userId, completingTask.id, completingTask.property_id, result.proofs);
     setAllTasks((prev) => {
       const without = prev.filter((t) => t.id !== completingTask.id);
       if (!nextTask) return without;
@@ -170,12 +158,12 @@ export default function DashboardScreen() {
     });
     if (userId) await recordTaskEvent(userId, completingTask, 'completed');
     setCompletedTasks((prev) => [
-      { ...completingTask, completed_at: new Date().toISOString(), propertyName: '', fileName: '' },
-      ...prev,
+      { ...completingTask, completed_at: new Date().toISOString() },
+      ...prev.filter((t) => t.id !== completingTask.id),
     ]);
     setCompletingTask(null);
     setCompletedCount((c) => c + 1);
-    setSuccessMessage('Task completed!');
+    setSuccessMessage(failed ? `Task completed — ${failed} file${failed === 1 ? '' : 's'} didn’t save` : 'Task completed!');
   };
 
   const handleDeleteTasksConfirm = async () => {

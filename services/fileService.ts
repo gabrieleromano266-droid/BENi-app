@@ -89,11 +89,12 @@ export async function uploadTaskDocument(
   propertyId: string | null,
   fileUri: string,
   fileName: string,
+  title?: string,
 ): Promise<{ id: string; filePath: string; displayName: string }> {
-  const displayName = await resolveUniqueFileName(userId, fileName);
+  const displayName = await resolveUniqueFileName(userId, recordName(fileName, title));
   const response = await fetch(fileUri);
   const blob = await response.blob();
-  const filePath = `${userId}/tasks/${taskId}/${Date.now()}-${displayName}`;
+  const filePath = `${userId}/tasks/${taskId}/${Date.now()}-${safePathPart(displayName)}`;
 
   const { error: uploadError } = await supabase.storage
     .from('user_files')
@@ -115,6 +116,58 @@ export async function uploadTaskDocument(
   if (dbError) throw dbError;
 
   return { id: data.id, filePath, displayName };
+}
+
+/** "Furnace invoice" + "IMG_2231.pdf" → "Furnace invoice.pdf"; no title keeps the original name. */
+function recordName(fileName: string, title?: string): string {
+  const clean = (title ?? '').replace(/[\\/:*?"<>|#%]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!clean) return fileName;
+  const dot = fileName.lastIndexOf('.');
+  const ext = dot > 0 ? fileName.slice(dot) : '';
+  return clean.toLowerCase().endsWith(ext.toLowerCase()) ? clean : `${clean}${ext}`;
+}
+
+/** Storage keys reject some characters people type in titles. */
+function safePathPart(name: string): string {
+  return name.replace(/[^\w.\- ()]+/g, '_');
+}
+
+export type PendingRecord = { uri: string; name: string; title?: string };
+
+/**
+ * Upload every record picked while completing a task. Each is guarded on its
+ * own, so one bad file can't lose the others — or the completion itself.
+ * Returns how many failed so the screen can say so.
+ */
+export async function attachRecords(
+  userId: string,
+  taskId: string,
+  propertyId: string | null,
+  records: PendingRecord[] | undefined,
+): Promise<number> {
+  let failed = 0;
+  for (const r of records ?? []) {
+    try {
+      await uploadTaskDocument(userId, taskId, propertyId, r.uri, r.name, r.title);
+    } catch (err) {
+      failed++;
+      console.error(`Could not attach "${r.name}":`, err);
+    }
+  }
+  return failed;
+}
+
+export type TaskRecord = { id: string; file_name: string; file_path: string; created_at: string };
+
+/** The receipts, invoices and photos kept against a completed task. */
+export async function fetchTaskRecords(taskId: string): Promise<TaskRecord[]> {
+  const { data, error } = await supabase
+    .from('files')
+    .select('id, file_name, file_path, created_at')
+    .eq('task_id', taskId)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as TaskRecord[];
 }
 
 /**
@@ -268,6 +321,7 @@ export async function hasAnyReport(userId: string): Promise<boolean> {
   const { count } = await supabase
     .from('files')
     .select('id', { count: 'exact', head: true })
-    .eq('user_id', userId);
+    .eq('user_id', userId)
+    .neq('kind', 'completion_proof');
   return (count ?? 0) > 0;
 }

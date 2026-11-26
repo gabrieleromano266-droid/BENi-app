@@ -14,7 +14,7 @@ import UploadExtractPopup from '@/components/upload/UploadExtractPopup';
 import { PAGE_MAX_WIDTH, SCREEN_PADDING } from '@/theme/layout';
 import { useSelectionMode } from '@/hooks/useSelectionMode';
 import { supabase } from '@/services/supabase';
-import { deleteFiles, downloadFile, fetchFilesForProperty } from '@/services/fileService';
+import { attachRecords, deleteFiles, downloadFile, fetchFilesForProperty } from '@/services/fileService';
 import { fetchStandardFeatures, fetchPropertyFeatureIds } from '@/services/featureService';
 import { completeTask, createTask, deleteTasks, fetchTasksForProperty, TaskInput, updateTask } from '@/services/taskService';
 import { useTheme } from '@/theme/ThemeContext';
@@ -142,7 +142,9 @@ export default function PropertyDetailScreen() {
 
   const handleCompleteTask = async (result: CompleteResult) => {
     if (!completingTask || !userId) return;
+    if (completingTask.completed_at) { setCompletingTask(null); return; }
     const nextTask = await completeTask(completingTask, userId, result.nextDueDate, result.newFrequency, result.newAnchor);
+    await attachRecords(userId, completingTask.id, completingTask.property_id, result.proofs);
     setTasks((prev) => {
       const without = prev.filter((t) => t.id !== completingTask.id);
       return nextTask ? sortByDueDate([...without, nextTask]) : without;

@@ -24,6 +24,8 @@ interface FileUploadZoneProps {
   /** Text under the icon, e.g. "(.pdf or .txt)". */
   hint?: string;
   label?: string;
+  /** The read-only "File Name *" box under the zone. Off where files are listed elsewhere. */
+  showNameField?: boolean;
 }
 
 export const FileUploadZone: React.FC<FileUploadZoneProps> = ({
@@ -34,6 +36,7 @@ export const FileUploadZone: React.FC<FileUploadZoneProps> = ({
   onDropFile,
   hint = '(.pdf or .txt)',
   label = 'File Name',
+  showNameField = true,
 }) => {
   const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
@@ -128,6 +131,7 @@ export const FileUploadZone: React.FC<FileUploadZoneProps> = ({
       )}
 
       {/* File name + Clear button */}
+      {showNameField && (
       <View style={styles.metaRow}>
         <Text style={[styles.label, { color: colors.textPrimary }]}>
           {label} <Text style={{ color: colors.danger }}>*</Text>
@@ -153,6 +157,7 @@ export const FileUploadZone: React.FC<FileUploadZoneProps> = ({
           )}
         </View>
       </View>
+      )}
     </View>
   );
 };

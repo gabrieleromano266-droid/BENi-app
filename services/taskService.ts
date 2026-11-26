@@ -227,10 +227,17 @@ export async function completeTask(
   newFrequency?: TaskInput['recurFrequency'],
   newAnchor?: TaskInput['recurAnchor'],
 ): Promise<DBTask | null> {
-  await supabase
+  // Only an OPEN task can be completed. Completing one twice (a double tap, or
+  // the old Complete button on the Completed list) used to schedule a second
+  // "next" occurrence — a duplicate in the plan.
+  const { data: closed, error: closeError } = await supabase
     .from('tasks')
     .update({ completed_at: new Date().toISOString() })
-    .eq('id', task.id);
+    .eq('id', task.id)
+    .is('completed_at', null)
+    .select('id');
+  if (closeError) throw closeError;
+  if (!closed?.length) return null;
 
   const freq = task.recur_frequency ?? newFrequency ?? null;
   const anchor = task.recur_anchor ?? newAnchor ?? null;
@@ -256,6 +263,16 @@ export async function completeTask(
       cost_min: task.cost_min,
       cost_max: task.cost_max,
       timing_note: task.timing_note,
+      // Without these, "every 2 years" came back as yearly and the next
+      // occurrence lost its proof and its place in the Upkeep calendar.
+      recur_interval: task.recur_frequency ? task.recur_interval : null,
+      recurrence: task.recurrence,
+      catalog_id: task.catalog_id,
+      source_page: task.source_page,
+      source_quote: task.source_quote,
+      severity_reason: task.severity_reason,
+      cost_confidence: task.cost_confidence,
+      task_kind: 'routine',
     })
     .select(TASK_FIELDS)
     .single();

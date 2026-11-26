@@ -20,6 +20,7 @@ import IconButton from '../IconButton';
 import ReportPageViewer from '../ReportPageViewer';
 import LinkedText from '../LinkedText';
 import RecommendedPros from './RecommendedPros';
+import TaskRecords from './TaskRecords';
 import { tradeFor, wantsAPro } from '@/services/contractorService';
 
 type Props = {
@@ -96,12 +97,18 @@ export default function MaintenanceTaskCard({ task, showProperty, showSource, on
   const systemLabel = task.system ? SYSTEM_LABELS[task.system] : null;
   const cost = formatCost(task.cost_min, task.cost_max);
   const isMajorExpense = (task.cost_max ?? 0) >= MAJOR_EXPENSE_THRESHOLD;
-  const doItBy = formatDoItBy(task.due_date, task.timing_note);
+  // A completed task is a record, not a to-do: no Complete button (completing
+  // it twice duplicated it), and it shows when it was done and the paperwork.
+  const done = !!task.completed_at;
+  const doneOn = done
+    ? new Date(task.completed_at!).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+    : null;
+  const doItBy = done ? null : formatDoItBy(task.due_date, task.timing_note);
 
   // The inspector's words and the fix decide whether a professional is wanted
   // and which trade (BENI-73).
   const proText = [task.source_quote, task.fix_recommendation, task.title].filter(Boolean).join(' ');
-  const showPros = task.task_kind !== 'note' && wantsAPro(proText);
+  const showPros = !done && task.task_kind !== 'note' && wantsAPro(proText);
 
   return (
     <View
@@ -129,6 +136,12 @@ export default function MaintenanceTaskCard({ task, showProperty, showSource, on
             {task.title}
           </Text>
           <View style={styles.metaRow}>
+            {done && (
+              <View style={[styles.recurPill, { backgroundColor: colors.successLight }]}>
+                <MaterialIcons name="check-circle" size={10} color={colors.success} />
+                <Text style={[styles.recurText, { color: colors.success }]}>Done {doneOn}</Text>
+              </View>
+            )}
             {!!systemLabel && (
               <Text style={[styles.metaText, { color: colors.textMuted }]}>{systemLabel}</Text>
             )}
@@ -195,6 +208,15 @@ export default function MaintenanceTaskCard({ task, showProperty, showSource, on
 
       {open && (
         <View style={[styles.detail, { borderTopColor: colors.borderLight }]}>
+          {done && (
+            <>
+              <DetailRow label="Completed" value={doneOn!} colors={colors} accent />
+              <View style={styles.detRow}>
+                <Text style={[styles.detLabel, { color: colors.textMuted }]}>Records</Text>
+                <TaskRecords taskId={task.id} propertyId={task.property_id} />
+              </View>
+            </>
+          )}
           {/* Proof first: the inspector's own sentence, verified against the
               PDF, with any links he gave made tappable (BENI-69). */}
           {!!task.source_quote && (
@@ -245,14 +267,16 @@ export default function MaintenanceTaskCard({ task, showProperty, showSource, on
                 style={styles.sourceBtn}
               />
             )}
-            <Button
-              title="Complete"
-              variant="success"
-              size="sm"
-              onPress={onComplete}
-              leftIcon={<MaterialIcons name="check" size={15} color="#fff" />}
-              style={styles.completeBtn}
-            />
+            {!done && (
+              <Button
+                title="Complete"
+                variant="success"
+                size="sm"
+                onPress={onComplete}
+                leftIcon={<MaterialIcons name="check" size={15} color="#fff" />}
+                style={styles.completeBtn}
+              />
+            )}
             <IconButton
               icon="delete-outline"
               iconSize={16}
