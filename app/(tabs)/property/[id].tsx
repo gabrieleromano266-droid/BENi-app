@@ -21,6 +21,7 @@ import { useTheme } from '@/theme/ThemeContext';
 import { DBTask, FileRecord, StandardFeature, TaskType } from '@/types';
 import { dbTaskToTaskType, sortByDueDate, toDateString } from '@/utils/taskUtils';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import HomeProfile from '@/components/property/HomeProfile';
 import { useEffect, useState } from 'react';
 import { fontSize, radius, spacing } from '@/theme/tokens';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -34,11 +35,17 @@ export default function PropertyDetailScreen() {
 
   const [userId, setUserId] = useState<string | null>(null);
   const [propertyName, setPropertyName] = useState('');
+  const [details, setDetails] = useState<{ address: string | null; year_built: number | null; last_inspection_date: string | null }>({
+    address: null, year_built: null, last_inspection_date: null,
+  });
   const [tasks, setTasks] = useState<DBTask[]>([]);
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [allPropertyFiles, setAllPropertyFiles] = useState<FileRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [section, setSection] = useState<Section>('tasks');
+  // Opens on the home's profile and files: the tasks already live on the
+  // dashboard, and a second copy of the list here was the founder's "I just
+  // don't see value in this page" (BENI-76). The list is still a tab away.
+  const [section, setSection] = useState<Section>('files');
   const [uploadVisible, setUploadVisible] = useState(false);
   const [addTaskVisible, setAddTaskVisible] = useState(false);
 
@@ -74,10 +81,17 @@ export default function PropertyDetailScreen() {
     try {
       const { data: property } = await supabase
         .from('properties')
-        .select('name')
+        .select('name, address, year_built, last_inspection_date')
         .eq('id', id)
         .single();
-      if (property) setPropertyName(property.name);
+      if (property) {
+        setPropertyName(property.name);
+        setDetails({
+          address: property.address ?? null,
+          year_built: property.year_built ?? null,
+          last_inspection_date: property.last_inspection_date ?? null,
+        });
+      }
 
       const allFiles = await fetchFilesForProperty(id);
       setAllPropertyFiles(allFiles);
@@ -241,6 +255,13 @@ export default function PropertyDetailScreen() {
                   style={{ backgroundColor: 'transparent' }}
                 />
               }
+            />
+
+            <HomeProfile
+              details={details}
+              reportCount={new Set(tasks.map((t) => t.file_id).filter(Boolean)).size}
+              tasks={tasks}
+              onOpenPlan={() => router.push('/(tabs)/dashboard' as any)}
             />
 
             {/* These pills are LABELS, not filters. They look like the filter

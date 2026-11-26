@@ -25,6 +25,8 @@ import { tradeFor, wantsAPro } from '@/services/contractorService';
 type Props = {
   task: TaskRow;
   showProperty?: boolean;
+  /** Upkeep calendar: say where the job came from — the report or BENi's plan. */
+  showSource?: boolean;
   onComplete: () => void;
   onDelete: () => void;
 };
@@ -60,7 +62,7 @@ function formatDoItBy(dueDate: string | null, timingNote: string | null): string
   return parts.length ? parts.join(' — ') : null;
 }
 
-export default function MaintenanceTaskCard({ task, showProperty, onComplete, onDelete }: Props) {
+export default function MaintenanceTaskCard({ task, showProperty, showSource, onComplete, onDelete }: Props) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
   const [openingReport, setOpeningReport] = useState(false);
@@ -141,6 +143,14 @@ export default function MaintenanceTaskCard({ task, showProperty, onComplete, on
                 job the homeowner has somehow failed to do. Order of
                 preference: our own schedule, then the cadence borrowed from
                 the recurring bank, then a plain "Ongoing". */}
+            {showSource && (
+              <View style={[styles.recurPill, { backgroundColor: task.file_id ? colors.primaryLight : colors.surfaceSecondary }]}>
+                <MaterialIcons name={task.file_id ? 'description' : 'event-repeat'} size={10} color={task.file_id ? colors.primary : colors.textMuted} />
+                <Text style={[styles.recurText, { color: task.file_id ? colors.primary : colors.textMuted }]}>
+                  {task.file_id ? 'From your report' : 'Seasonal plan'}
+                </Text>
+              </View>
+            )}
             {task.from_summary && (
               <View style={[styles.recurPill, { backgroundColor: colors.severityCriticalBg }]}>
                 <MaterialIcons name="push-pin" size={10} color={colors.severityCriticalText} />

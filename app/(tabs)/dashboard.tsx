@@ -12,6 +12,7 @@ import AddPropertyPopup from '@/components/dashboard/AddPropertyPopup';
 import HealthScorePanel from '@/components/dashboard/HealthScorePanel';
 import MaintenanceTaskCard from '@/components/dashboard/MaintenanceTaskCard';
 import Dropdown from '@/components/Dropdown';
+import SegmentedControl from '@/components/SegmentedControl';
 import EmptyText from '@/components/EmptyText';
 import FilterChips, { ChipOption } from '@/components/FilterChips';
 import IconButton from '@/components/IconButton';
@@ -333,6 +334,39 @@ export default function DashboardScreen() {
       ? completedScoped.filter(matchesSystem)
       : scopedTasks.filter((t) => matchesSystem(t) && matchesSeverity(t) && matchesKind(t));
 
+  /**
+   * How the plan is laid out (BENI-75):
+   *   Fix list        — most serious first, then soonest due;
+   *   Upkeep calendar — grouped by the month each job comes due, overdue on top.
+   */
+  const SEV_RANK: Record<string, number> = { critical: 0, moderate: 1, minor: 2 };
+  const byDue = (a: TaskRow, b: TaskRow) => (a.due_date ?? '9999').localeCompare(b.due_date ?? '9999');
+  const planSections: { key: string; label: string | null; overdue?: boolean; tasks: TaskRow[] }[] = (() => {
+    if (severityFilter === 'completed' || kindFilter !== 'routine') {
+      const list = severityFilter === 'completed' || kindFilter === 'note'
+        ? displayedTasks
+        : [...displayedTasks].sort((a, b) =>
+            ((SEV_RANK[a.severity ?? ''] ?? 3) - (SEV_RANK[b.severity ?? ''] ?? 3)) || byDue(a, b));
+      return [{ key: 'all', label: null, tasks: list }];
+    }
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const groups = new Map<string, { key: string; label: string | null; overdue?: boolean; tasks: TaskRow[] }>();
+    for (const t of [...displayedTasks].sort(byDue)) {
+      const overdue = !!t.due_date && t.due_date < todayIso;
+      const key = overdue ? 'overdue' : t.due_date ? t.due_date.slice(0, 7) : 'unscheduled';
+      const label = overdue
+        ? 'Overdue'
+        : t.due_date
+          ? new Date(t.due_date + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+          : 'Not scheduled';
+      if (!groups.has(key)) groups.set(key, { key, label, overdue, tasks: [] });
+      groups.get(key)!.tasks.push(t);
+    }
+    const ordered = [...groups.values()];
+    ordered.sort((a, b) => (a.key === 'overdue' ? -1 : b.key === 'overdue' ? 1 : a.key.localeCompare(b.key)));
+    return ordered;
+  })();
+
   const pendingDeleteTaskTitle = allTasks.find((t) => t.id === pendingDeleteTaskIds[0])?.title;
   const selectedProperty = selectedPropertyId ? properties.find((p) => p.id === selectedPropertyId) : null;
 
@@ -509,22 +543,34 @@ export default function DashboardScreen() {
             <IconButton icon="add" onPress={() => setAddTaskVisible(true)} size={30} />
           </View>
 
+          {/* Two different jobs, two views (BENI-75). Mixing one-off repairs
+              with the recurring calendar in one list was the founder's
+              "convoluted" — he couldn't tell what came from his report. */}
           {!loadingTasks && scopedTasks.length > 0 && severityFilter !== 'completed' && (
-            <FilterChips
-              options={[
-                { label: `To do (${kindCounts.action})`, value: 'action' },
-                { label: `Routine upkeep (${kindCounts.routine})`, value: 'routine' },
-                ...(kindCounts.note > 0 ? [{ label: `Good to know (${kindCounts.note})`, value: 'note' }] : []),
-              ]}
-              selected={kindFilter}
-              onSelect={(v) => {
-                const next = (v as TaskKind) ?? 'action';
-                // Routine jobs carry no severity, so a tile left selected
-                // would just empty the list.
-                if (next === 'routine') setSeverityFilter(null);
-                setKindFilter(next);
-              }}
-            />
+            <>
+              <SegmentedControl
+                tabs={[
+                  { label: `Fix list (${kindCounts.action})`, value: 'action' },
+                  { label: `Upkeep calendar (${kindCounts.routine})`, value: 'routine' },
+                  ...(kindCounts.note > 0 ? [{ label: `Notes (${kindCounts.note})`, value: 'note' }] : []),
+                ]}
+                selected={kindFilter}
+                onSelect={(v) => {
+                  const next = (v as TaskKind) ?? 'action';
+                  // Upkeep carries no severity, so a tile left selected would
+                  // just empty the list.
+                  if (next === 'routine') setSeverityFilter(null);
+                  setKindFilter(next);
+                }}
+              />
+              <Text style={[styles.viewHint, { color: colors.textMuted }]}>
+                {kindFilter === 'action'
+                  ? 'Repairs and checks from your inspection report — most serious first.'
+                  : kindFilter === 'routine'
+                    ? 'Everything that repeats, from your report and BENi’s seasonal plan, in the order it comes due.'
+                    : 'Information from your report — nothing to do.'}
+              </Text>
+            </>
           )}
 
           {!loadingTasks && scopedTasks.length > 0 && (
@@ -542,14 +588,24 @@ export default function DashboardScreen() {
                   : 'No items match the selected filters.'}
             </EmptyText>
           ) : (
-            displayedTasks.map((task) => (
-              <MaintenanceTaskCard
-                key={task.id}
-                task={task}
-                showProperty={!selectedProperty}
-                onComplete={() => setCompletingTask(task)}
-                onDelete={() => setPendingDeleteTaskIds([task.id])}
-              />
+            planSections.map((section) => (
+              <View key={section.key}>
+                {!!section.label && (
+                  <Text style={[styles.monthHeader, { color: section.overdue ? colors.danger : colors.textSecondary }]}>
+                    {section.label}
+                  </Text>
+                )}
+                {section.tasks.map((task) => (
+                  <MaintenanceTaskCard
+                    key={task.id}
+                    task={task}
+                    showProperty={!selectedProperty}
+                    showSource={kindFilter === 'routine'}
+                    onComplete={() => setCompletingTask(task)}
+                    onDelete={() => setPendingDeleteTaskIds([task.id])}
+                  />
+                ))}
+              </View>
             ))
           )}
         </Card>
@@ -767,6 +823,19 @@ const styles = StyleSheet.create({
   planBody: {
     fontSize: fontSize.sm,
     lineHeight: 18,
+  },
+  viewHint: {
+    fontSize: fontSize.sm,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  monthHeader: {
+    fontFamily: fonts.bodySemibold,
+    fontSize: fontSize.sm,
+    marginTop: spacing.md,
+    marginBottom: spacing.xs,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
   },
   disclaimer: {
     fontSize: fontSize.xs,
