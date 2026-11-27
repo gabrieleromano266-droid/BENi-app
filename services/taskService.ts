@@ -226,13 +226,19 @@ export async function completeTask(
   nextDueDate: Date | null,
   newFrequency?: TaskInput['recurFrequency'],
   newAnchor?: TaskInput['recurAnchor'],
+  /** The day the work was really done — may be earlier than today. */
+  completedOn?: Date,
 ): Promise<DBTask | null> {
+  const now = new Date();
+  const doneAt = completedOn && completedOn.toDateString() !== now.toDateString()
+    ? new Date(completedOn.getFullYear(), completedOn.getMonth(), completedOn.getDate(), 12)
+    : now;
   // Only an OPEN task can be completed. Completing one twice (a double tap, or
   // the old Complete button on the Completed list) used to schedule a second
   // "next" occurrence — a duplicate in the plan.
   const { data: closed, error: closeError } = await supabase
     .from('tasks')
-    .update({ completed_at: new Date().toISOString() })
+    .update({ completed_at: doneAt.toISOString() })
     .eq('id', task.id)
     .is('completed_at', null)
     .select('id');

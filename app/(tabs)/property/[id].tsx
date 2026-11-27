@@ -14,9 +14,10 @@ import UploadExtractPopup from '@/components/upload/UploadExtractPopup';
 import { PAGE_MAX_WIDTH, SCREEN_PADDING } from '@/theme/layout';
 import { useSelectionMode } from '@/hooks/useSelectionMode';
 import { supabase } from '@/services/supabase';
-import { attachRecords, deleteFiles, downloadFile, fetchFilesForProperty } from '@/services/fileService';
+import { deleteFiles, downloadFile, fetchFilesForProperty } from '@/services/fileService';
+import { finishedMessage, finishTask } from '@/services/finishTask';
 import { fetchStandardFeatures, fetchPropertyFeatureIds } from '@/services/featureService';
-import { completeTask, createTask, deleteTasks, fetchTasksForProperty, TaskInput, updateTask } from '@/services/taskService';
+import { createTask, deleteTasks, fetchTasksForProperty, TaskInput, updateTask } from '@/services/taskService';
 import { useTheme } from '@/theme/ThemeContext';
 import { DBTask, FileRecord, StandardFeature, TaskType } from '@/types';
 import { dbTaskToTaskType, sortByDueDate, toDateString } from '@/utils/taskUtils';
@@ -142,15 +143,15 @@ export default function PropertyDetailScreen() {
 
   const handleCompleteTask = async (result: CompleteResult) => {
     if (!completingTask || !userId) return;
-    if (completingTask.completed_at) { setCompletingTask(null); return; }
-    const nextTask = await completeTask(completingTask, userId, result.nextDueDate, result.newFrequency, result.newAnchor);
-    await attachRecords(userId, completingTask.id, completingTask.property_id, result.proofs);
+    const outcome = await finishTask(completingTask, userId, result);
+    if (!outcome) { setCompletingTask(null); return; }
+    const nextTask = outcome.next;
     setTasks((prev) => {
       const without = prev.filter((t) => t.id !== completingTask.id);
       return nextTask ? sortByDueDate([...without, nextTask]) : without;
     });
     setCompletingTask(null);
-    setSuccessMessage('Task completed!');
+    setSuccessMessage(finishedMessage(outcome));
   };
 
   const handleDeleteTasksConfirm = async () => {

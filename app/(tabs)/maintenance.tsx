@@ -1,6 +1,6 @@
 import AddTaskModal from '@/components/AddTaskModal';
 import Button from '@/components/Button';
-import { attachRecords } from '@/services/fileService';
+import { finishedMessage, finishTask } from '@/services/finishTask';
 import CompleteTaskModal, { CompleteResult } from '@/components/CompleteTaskModal';
 import ConfirmDeleteModal from '@/components/ConfirmDeleteModal';
 import EmptyText from '@/components/EmptyText';
@@ -13,7 +13,7 @@ import TaskItem from '@/components/TaskItem';
 import { useSelectionMode } from '@/hooks/useSelectionMode';
 import { supabase } from '@/services/supabase';
 import { fetchProperties } from '@/services/propertyService';
-import { completeTask, createTask, deleteTasks, fetchAllTasksForUser, TaskInput, updateTask } from '@/services/taskService';
+import { createTask, deleteTasks, fetchAllTasksForUser, TaskInput, updateTask } from '@/services/taskService';
 import { useTheme } from '@/theme/ThemeContext';
 import { Property, TaskRow, TaskType } from '@/types';
 import { dbTaskToTaskType, sortByDueDate, toDateString } from '@/utils/taskUtils';
@@ -103,9 +103,9 @@ export default function MaintenanceScreen() {
 
   const handleCompleteTask = async (result: CompleteResult) => {
     if (!completingTask || !userId) return;
-    if (completingTask.completed_at) { setCompletingTask(null); return; }
-    const nextTask = await completeTask(completingTask, userId, result.nextDueDate, result.newFrequency, result.newAnchor);
-    await attachRecords(userId, completingTask.id, completingTask.property_id, result.proofs);
+    const outcome = await finishTask(completingTask, userId, result);
+    if (!outcome) { setCompletingTask(null); return; }
+    const nextTask = outcome.next;
     setAllTasks((prev) => {
       const without = prev.filter((t) => t.id !== completingTask.id);
       if (!nextTask) return without;
@@ -113,7 +113,7 @@ export default function MaintenanceScreen() {
       return sortByDueDate([...without, { ...nextTask, propertyName, fileName: '' }]);
     });
     setCompletingTask(null);
-    setSuccessMessage('Task completed!');
+    setSuccessMessage(finishedMessage(outcome));
   };
 
   const handleDeleteTasksConfirm = async () => {

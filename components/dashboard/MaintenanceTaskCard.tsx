@@ -20,7 +20,7 @@ import IconButton from '../IconButton';
 import ReportPageViewer from '../ReportPageViewer';
 import LinkedText from '../LinkedText';
 import RecommendedPros from './RecommendedPros';
-import TaskRecords from './TaskRecords';
+import CompletionSummary from './CompletionSummary';
 import { tradeFor, wantsAPro } from '@/services/contractorService';
 
 type Props = {
@@ -28,6 +28,8 @@ type Props = {
   showProperty?: boolean;
   /** Upkeep calendar: say where the job came from — the report or BENi's plan. */
   showSource?: boolean;
+  /** Upkeep is grouped by severity, so each card says when it's next due. */
+  showDue?: boolean;
   onComplete: () => void;
   onDelete: () => void;
 };
@@ -63,7 +65,7 @@ function formatDoItBy(dueDate: string | null, timingNote: string | null): string
   return parts.length ? parts.join(' — ') : null;
 }
 
-export default function MaintenanceTaskCard({ task, showProperty, showSource, onComplete, onDelete }: Props) {
+export default function MaintenanceTaskCard({ task, showProperty, showSource, showDue, onComplete, onDelete }: Props) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
   const [openingReport, setOpeningReport] = useState(false);
@@ -104,6 +106,11 @@ export default function MaintenanceTaskCard({ task, showProperty, showSource, on
     ? new Date(task.completed_at!).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
     : null;
   const doItBy = done ? null : formatDoItBy(task.due_date, task.timing_note);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const overdue = !done && !!task.due_date && task.due_date < todayIso;
+  const dueShort = task.due_date
+    ? new Date(task.due_date + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+    : null;
 
   // The inspector's words and the fix decide whether a professional is wanted
   // and which trade (BENI-73).
@@ -141,6 +148,11 @@ export default function MaintenanceTaskCard({ task, showProperty, showSource, on
                 <MaterialIcons name="check-circle" size={10} color={colors.success} />
                 <Text style={[styles.recurText, { color: colors.success }]}>Done {doneOn}</Text>
               </View>
+            )}
+            {showDue && !!dueShort && (
+              <Text style={[styles.metaText, { color: overdue ? colors.danger : colors.textSecondary, fontWeight: '600' }]}>
+                {overdue ? `Overdue · ${dueShort}` : `Due ${dueShort}`}
+              </Text>
             )}
             {!!systemLabel && (
               <Text style={[styles.metaText, { color: colors.textMuted }]}>{systemLabel}</Text>
@@ -208,15 +220,7 @@ export default function MaintenanceTaskCard({ task, showProperty, showSource, on
 
       {open && (
         <View style={[styles.detail, { borderTopColor: colors.borderLight }]}>
-          {done && (
-            <>
-              <DetailRow label="Completed" value={doneOn!} colors={colors} accent />
-              <View style={styles.detRow}>
-                <Text style={[styles.detLabel, { color: colors.textMuted }]}>Records</Text>
-                <TaskRecords taskId={task.id} propertyId={task.property_id} />
-              </View>
-            </>
-          )}
+          {done && <CompletionSummary task={task} />}
           {/* Proof first: the inspector's own sentence, verified against the
               PDF, with any links he gave made tappable (BENI-69). */}
           {!!task.source_quote && (
@@ -236,7 +240,7 @@ export default function MaintenanceTaskCard({ task, showProperty, showSource, on
           {!!task.fix_recommendation && (
             <DetailRow label="How to fix it" value={task.fix_recommendation} colors={colors} />
           )}
-          {!!cost && (
+          {!!cost && !done && (
             <DetailRow
               label="Est. cost"
               value={isMajorExpense ? `${cost}  ·  major expense` : cost}

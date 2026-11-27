@@ -20,12 +20,12 @@ import InfoPopup from '@/components/InfoPopup';
 import PageContainer from '@/components/PageContainer';
 import PageHeader from '@/components/PageHeader';
 import { SYSTEMS } from '@/constants/systems';
-import { attachRecords } from '@/services/fileService';
+import { finishedMessage, finishTask } from '@/services/finishTask';
 import { fetchFirstName } from '@/services/profileService';
 import { fetchProperties } from '@/services/propertyService';
 import { supabase } from '@/services/supabase';
 import {
-  completeTask, createTask, deleteTasks, fetchAllTasksForUser, fetchCompletedTaskCount,
+  createTask, deleteTasks, fetchAllTasksForUser, fetchCompletedTaskCount,
   fetchCompletedTasksForUser, TaskInput,
 } from '@/services/taskService';
 import { BREAKPOINT, SIDEBAR_BREAKPOINT, SIDEBAR_WIDTH } from '@/theme/layout';
@@ -147,9 +147,9 @@ export default function DashboardScreen() {
 
   const handleCompleteTask = async (result: CompleteResult) => {
     if (!completingTask || !userId) return;
-    if (completingTask.completed_at) { setCompletingTask(null); return; }
-    const nextTask = await completeTask(completingTask, userId, result.nextDueDate, result.newFrequency, result.newAnchor);
-    const failed = await attachRecords(userId, completingTask.id, completingTask.property_id, result.proofs);
+    const outcome = await finishTask(completingTask, userId, result);
+    if (!outcome) { setCompletingTask(null); return; }
+    const nextTask = outcome.next;
     setAllTasks((prev) => {
       const without = prev.filter((t) => t.id !== completingTask.id);
       if (!nextTask) return without;
@@ -158,12 +158,12 @@ export default function DashboardScreen() {
     });
     if (userId) await recordTaskEvent(userId, completingTask, 'completed');
     setCompletedTasks((prev) => [
-      { ...completingTask, completed_at: new Date().toISOString() },
+      { ...completingTask, completed_at: outcome.completedAt },
       ...prev.filter((t) => t.id !== completingTask.id),
-    ]);
+    ].sort((a, b) => (b.completed_at ?? '').localeCompare(a.completed_at ?? '')));
     setCompletingTask(null);
     setCompletedCount((c) => c + 1);
-    setSuccessMessage(failed ? `Task completed — ${failed} file${failed === 1 ? '' : 's'} didn’t save` : 'Task completed!');
+    setSuccessMessage(finishedMessage(outcome));
   };
 
   const handleDeleteTasksConfirm = async () => {
@@ -323,36 +323,32 @@ export default function DashboardScreen() {
       : scopedTasks.filter((t) => matchesSystem(t) && matchesSeverity(t) && matchesKind(t));
 
   /**
-   * How the plan is laid out (BENI-75):
-   *   Fix list        — most serious first, then soonest due;
-   *   Upkeep calendar — grouped by the month each job comes due, overdue on top.
+   * How the plan is laid out: Fix list and Upkeep are both grouped Critical →
+   * Moderate → Minor, soonest due first inside each group. The founder found
+   * the month-by-month upkeep list read like "a random list of items".
    */
-  const SEV_RANK: Record<string, number> = { critical: 0, moderate: 1, minor: 2 };
   const byDue = (a: TaskRow, b: TaskRow) => (a.due_date ?? '9999').localeCompare(b.due_date ?? '9999');
-  const planSections: { key: string; label: string | null; overdue?: boolean; tasks: TaskRow[] }[] = (() => {
-    if (severityFilter === 'completed' || kindFilter !== 'routine') {
-      const list = severityFilter === 'completed' || kindFilter === 'note'
-        ? displayedTasks
-        : [...displayedTasks].sort((a, b) =>
-            ((SEV_RANK[a.severity ?? ''] ?? 3) - (SEV_RANK[b.severity ?? ''] ?? 3)) || byDue(a, b));
-      return [{ key: 'all', label: null, tasks: list }];
+  const SEV_SECTIONS: { key: string; label: string; color: string }[] = [
+    { key: 'critical', label: 'Critical', color: colors.danger },
+    { key: 'moderate', label: 'Moderate', color: colors.warning },
+    { key: 'minor', label: 'Minor', color: colors.success },
+    { key: 'none', label: kindFilter === 'routine' ? 'General upkeep' : 'Not rated', color: colors.info },
+  ];
+  const planSections: { key: string; label: string | null; color?: string; tasks: TaskRow[] }[] = (() => {
+    if (severityFilter === 'completed') {
+      return [{ key: 'done', label: null, tasks: [...displayedTasks].sort((a, b) => (b.completed_at ?? '').localeCompare(a.completed_at ?? '')) }];
     }
-    const todayIso = new Date().toISOString().slice(0, 10);
-    const groups = new Map<string, { key: string; label: string | null; overdue?: boolean; tasks: TaskRow[] }>();
-    for (const t of [...displayedTasks].sort(byDue)) {
-      const overdue = !!t.due_date && t.due_date < todayIso;
-      const key = overdue ? 'overdue' : t.due_date ? t.due_date.slice(0, 7) : 'unscheduled';
-      const label = overdue
-        ? 'Overdue'
-        : t.due_date
-          ? new Date(t.due_date + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
-          : 'Not scheduled';
-      if (!groups.has(key)) groups.set(key, { key, label, overdue, tasks: [] });
-      groups.get(key)!.tasks.push(t);
-    }
-    const ordered = [...groups.values()];
-    ordered.sort((a, b) => (a.key === 'overdue' ? -1 : b.key === 'overdue' ? 1 : a.key.localeCompare(b.key)));
-    return ordered;
+    if (kindFilter === 'note') return [{ key: 'notes', label: null, tasks: displayedTasks }];
+    return SEV_SECTIONS
+      .map((s) => ({
+        key: s.key,
+        label: s.label,
+        color: s.color,
+        tasks: displayedTasks
+          .filter((t) => (t.severity && t.severity in { critical: 1, moderate: 1, minor: 1 } ? t.severity : 'none') === s.key)
+          .sort(byDue),
+      }))
+      .filter((s) => s.tasks.length > 0);
   })();
 
   const pendingDeleteTaskTitle = allTasks.find((t) => t.id === pendingDeleteTaskIds[0])?.title;
@@ -555,7 +551,7 @@ export default function DashboardScreen() {
                 {kindFilter === 'action'
                   ? 'Repairs and checks from your inspection report — most serious first.'
                   : kindFilter === 'routine'
-                    ? 'Everything that repeats, from your report and BENi’s seasonal plan, in the order it comes due.'
+                    ? 'Everything that repeats, from your report and BENi’s seasonal plan — most important first, soonest due within each.'
                     : 'Information from your report — nothing to do.'}
               </Text>
             </>
@@ -579,16 +575,20 @@ export default function DashboardScreen() {
             planSections.map((section) => (
               <View key={section.key}>
                 {!!section.label && (
-                  <Text style={[styles.monthHeader, { color: section.overdue ? colors.danger : colors.textSecondary }]}>
-                    {section.label}
-                  </Text>
+                  <View style={styles.sectionHeader}>
+                    <View style={[styles.sectionDot, { backgroundColor: section.color }]} />
+                    <Text style={[styles.monthHeader, { color: colors.textSecondary }]}>
+                      {section.label} · {section.tasks.length}
+                    </Text>
+                  </View>
                 )}
                 {section.tasks.map((task) => (
                   <MaintenanceTaskCard
                     key={task.id}
                     task={task}
                     showProperty={!selectedProperty}
-                    showSource={kindFilter === 'routine'}
+                    showSource={kindFilter === 'routine' && severityFilter !== 'completed'}
+                    showDue={kindFilter === 'routine' && severityFilter !== 'completed'}
                     onComplete={() => setCompletingTask(task)}
                     onDelete={() => setPendingDeleteTaskIds([task.id])}
                   />
@@ -817,11 +817,21 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     marginBottom: spacing.sm,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  sectionDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
   monthHeader: {
     fontFamily: fonts.bodySemibold,
     fontSize: fontSize.sm,
-    marginTop: spacing.md,
-    marginBottom: spacing.xs,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },

@@ -19,15 +19,24 @@ export function computeNextDueDate(
   currentDueDate: Date | null,
   frequency: RecurFrequency,
   anchor: RecurAnchor,
+  /** every N: monthly ×3 = every 3 months. Ignoring it booked filters a month out. */
+  interval: number | null = 1,
+  completedOn: Date = new Date(),
 ): Date {
-  const base = anchor === 'completion' ? new Date() : (currentDueDate ?? new Date());
-  const next = new Date(base);
-  switch (frequency) {
-    case 'daily':   next.setDate(next.getDate() + 1); break;
-    case 'weekly':  next.setDate(next.getDate() + 7); break;
-    case 'monthly': next.setMonth(next.getMonth() + 1); break;
-    case 'yearly':  next.setFullYear(next.getFullYear() + 1); break;
-  }
+  const n = Math.max(1, interval ?? 1);
+  const step = (d: Date) => {
+    const next = new Date(d);
+    switch (frequency) {
+      case 'daily':   next.setDate(next.getDate() + n); break;
+      case 'weekly':  next.setDate(next.getDate() + 7 * n); break;
+      case 'monthly': next.setMonth(next.getMonth() + n); break;
+      case 'yearly':  next.setFullYear(next.getFullYear() + n); break;
+    }
+    return next;
+  };
+  let next = step(anchor === 'completion' ? completedOn : (currentDueDate ?? completedOn));
+  // A due-date anchor from long ago must not schedule the next one in the past.
+  for (let i = 0; next <= completedOn && i < 500; i++) next = step(next);
   return next;
 }
 
